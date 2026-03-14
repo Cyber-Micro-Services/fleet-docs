@@ -1,14 +1,14 @@
-export type DocumentType = 
-  | 'ITP' 
-  | 'RCA' 
-  | 'Revizie Tehnica' 
-  | 'Carnet Prometeu' 
-  | 'Certificat Echilibru'
-  | 'Asigurare Marfa'
-  | 'Certificat Geumatic'
-  | 'Alte Documente';
+export type DocumentType =
+  | "ITP"
+  | "RCA"
+  | "Revizie Tehnica"
+  | "Carnet Prometeu"
+  | "Certificat Echilibru"
+  | "Asigurare Marfa"
+  | "Certificat Geumatic"
+  | "Alte Documente";
 
-export type AlertStatus = 'EXPIRED' | 'URGENT' | 'ALERT' | 'WARNING' | 'NORMAL';
+export type AlertStatus = "EXPIRED" | "URGENT" | "ALERT" | "WARNING" | "NORMAL";
 
 export interface Document {
   id: string;
@@ -44,5 +44,31 @@ export interface AlertLog {
   trailerId: string;
   message: string;
   sentAt: string;
-  type: 'EMAIL' | 'IN_APP';
+  type: "EMAIL" | "IN_APP";
+}
+
+export interface AuthUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthResponse {
+  accessToken: string;
+  user: AuthUser;
+}
+
+export interface RegisterPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginPayload {
+  email: string;
+  password: string;
 }
