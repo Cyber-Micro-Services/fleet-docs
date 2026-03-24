@@ -15,6 +15,9 @@ import {
   RegisterPayload,
   LoginPayload,
   AuthResponse,
+  CreateVehiclePayload,
+  VehicleResponse,
+  VehicleType,
 } from "./types";
 import {
   generateMockTrailers,
@@ -36,12 +39,7 @@ interface AppContextType {
     init?: RequestInit,
   ) => Promise<Response>;
   trailers: Trailer[];
-  addTrailer: (payload: {
-    registrationNumber: string;
-    type: string;
-    manufacturer: string;
-    manufactureDate: string;
-  }) => void;
+  createVehicle: (payload: CreateVehiclePayload) => Promise<void>;
   addDocument: (trailerId: string, document: Document) => void;
   updateDocument: (
     trailerId: string,
@@ -67,6 +65,15 @@ interface RefreshPayload {
 }
 
 type AuthEndpoint = "login" | "register" | "refresh" | "logout";
+
+const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
+  SEMIREMORCA_FURGON: "Semiremorca Furgon",
+  SEMIREMORCA_CISTERNA: "Semiremorca Cisterna",
+  SEMIREMORCA_PLATFORMA: "Semiremorca Platforma",
+  REMORCA_PLATFORMA: "Remorca Platforma",
+  CAMION: "Camion",
+  CAP_CAMION: "Cap Camion",
+};
 
 function normalizeErrorMessage(
   errorPayload: unknown,
@@ -144,6 +151,35 @@ function isAuthResponse(payload: unknown): payload is AuthResponse {
     typeof candidate.user === "object" &&
     candidate.user !== null
   );
+}
+
+function isVehicleResponse(payload: unknown): payload is VehicleResponse {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const candidate = payload as Partial<VehicleResponse>;
+  return (
+    typeof candidate.series === "string" &&
+    typeof candidate.manufacturer === "string" &&
+    typeof candidate.vehicleType === "string" &&
+    typeof candidate.manufacturedAtUtc === "string"
+  );
+}
+
+function mapVehicleToTrailer(vehicle: VehicleResponse): Trailer {
+  const manufacturedAtUtc = vehicle.manufacturedAtUtc;
+
+  return {
+    id: vehicle.id ?? `trailer-${crypto.randomUUID()}`,
+    registrationNumber: vehicle.series,
+    manufacturer: vehicle.manufacturer,
+    type: VEHICLE_TYPE_LABELS[vehicle.vehicleType],
+    year: new Date(manufacturedAtUtc).getUTCFullYear(),
+    manufacturedAtUtc,
+    documents: [],
+    urgencyScore: 0,
+  };
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -371,31 +407,80 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const addTrailer = useCallback(
-    (payload: {
-      registrationNumber: string;
-      type: string;
-      manufacturer: string;
-      manufactureDate: string;
-    }) => {
-      const manufactureDateUtc = new Date(
-        `${payload.manufactureDate}T00:00:00.000Z`,
-      ).toISOString();
+  const createVehicle = useCallback(
+    async (payload: CreateVehiclePayload): Promise<void> => {
+      let response: Response;
 
-      const newTrailer: Trailer = {
-        id: `trailer-${crypto.randomUUID()}`,
-        registrationNumber: payload.registrationNumber.trim(),
-        type: payload.type,
-        manufacturer: payload.manufacturer.trim(),
-        year: new Date(manufactureDateUtc).getUTCFullYear(),
-        manufacturedAtUtc: manufactureDateUtc,
-        documents: [],
-        urgencyScore: 0,
-      };
+      try {
+        response = await authFetch("/api/vehicles", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        throw new Error(
+          "Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.",
+        );
+      }
 
-      setTrailers((prevTrailers) => [newTrailer, ...prevTrailers]);
+      let responsePayload: unknown = null;
+      try {
+        responsePayload = await response.json();
+      } catch {
+        responsePayload = null;
+      }
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          throw new Error(
+            normalizeErrorMessage(
+              responsePayload,
+              "Date invalide. Verifica seria, tipul vehiculului si data de fabricatie in format UTC.",
+            ),
+          );
+        }
+
+        if (response.status === 401) {
+          throw new Error(
+            "Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.",
+          );
+        }
+
+        if (response.status === 409) {
+          throw new Error(
+            normalizeErrorMessage(
+              responsePayload,
+              "Exista deja un vehicul cu aceasta serie in flota selectata.",
+            ),
+          );
+        }
+
+        throw new Error(
+          normalizeErrorMessage(
+            responsePayload,
+            "Nu am putut adauga vehiculul.",
+          ),
+        );
+      }
+
+      const vehicle = isVehicleResponse(responsePayload)
+        ? responsePayload
+        : {
+            series: payload.series,
+            manufacturer: payload.manufacturer,
+            vehicleType: payload.vehicleType,
+            manufacturedAtUtc: payload.manufacturedAtUtc,
+            fleetId: payload.fleetId ?? null,
+          };
+
+      setTrailers((prevTrailers) => [
+        mapVehicleToTrailer(vehicle),
+        ...prevTrailers,
+      ]);
     },
-    [],
+    [authFetch],
   );
 
   const updateDocument = useCallback(
@@ -466,7 +551,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         getAuthHeaders,
         authFetch,
         trailers,
-        addTrailer,
+        createVehicle,
         addDocument,
         updateDocument,
         deleteDocument,

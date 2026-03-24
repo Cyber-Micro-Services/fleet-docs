@@ -1,7 +1,7 @@
 "use client";
 
 import { useApp } from "@/lib/app-context";
-import { AlertStatus } from "@/lib/types";
+import { AlertStatus, VehicleType } from "@/lib/types";
 import {
   LogOut,
   AlertCircle,
@@ -58,56 +58,83 @@ export default function Dashboard({
 }: {
   onSelectTrailer: (trailerId: string) => void;
 }) {
-  const { logout, getTrailersSorted, addTrailer } = useApp();
+  const { logout, getTrailersSorted, createVehicle } = useApp();
   const sortedTrailers = getTrailersSorted();
   const [isAddTrailerOpen, setIsAddTrailerOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    registrationNumber: "",
+    series: "",
     manufacturer: "",
-    type: "Semiremorca Furgon",
+    vehicleType: "SEMIREMORCA_FURGON" as VehicleType,
     manufactureDate: "",
   });
 
-  const trailerTypes = [
-    "Semiremorca Furgon",
-    "Semiremorca Cisterna",
-    "Semiremorca Platforma",
-    "Remorca Platforma",
-    "Camion",
-    "Cap Camion",
+  const trailerTypes: Array<{ label: string; value: VehicleType }> = [
+    { label: "Semiremorca Furgon", value: "SEMIREMORCA_FURGON" },
+    { label: "Semiremorca Cisterna", value: "SEMIREMORCA_CISTERNA" },
+    { label: "Semiremorca Platforma", value: "SEMIREMORCA_PLATFORMA" },
+    { label: "Remorca Platforma", value: "REMORCA_PLATFORMA" },
+    { label: "Camion", value: "CAMION" },
+    { label: "Cap Camion", value: "CAP_CAMION" },
   ];
 
   const resetForm = () => {
     setFormData({
-      registrationNumber: "",
+      series: "",
       manufacturer: "",
-      type: "Semiremorca Furgon",
+      vehicleType: "SEMIREMORCA_FURGON",
       manufactureDate: "",
     });
+    setSubmitError(null);
   };
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    addTrailer({
-      registrationNumber: formData.registrationNumber,
-      manufacturer: formData.manufacturer,
-      type: formData.type,
-      manufactureDate: formData.manufactureDate,
-    });
+    const series = formData.series.trim().toUpperCase();
+    const manufacturer = formData.manufacturer.trim();
 
-    resetForm();
-    setIsAddTrailerOpen(false);
+    if (!series || !manufacturer || !formData.manufactureDate) {
+      setSubmitError("Completeaza toate campurile obligatorii.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      await createVehicle({
+        series,
+        manufacturer,
+        vehicleType: formData.vehicleType,
+        manufacturedAtUtc: `${formData.manufactureDate}T00:00:00Z`,
+      });
+
+      resetForm();
+      setIsAddTrailerOpen(false);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Nu am putut adauga vehiculul.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleDialogOpenChange = (isOpen: boolean) => {
+    if (isSubmitting) {
+      return;
+    }
+
     setIsAddTrailerOpen(isOpen);
     if (!isOpen) {
       resetForm();
     }
   };
 
-  // Calculate statistics
   const stats = {
     total: sortedTrailers.length,
     urgent: sortedTrailers.filter((t) =>
@@ -215,15 +242,15 @@ export default function Dashboard({
                   id="registrationNumber"
                   type="text"
                   required
-                  value={formData.registrationNumber}
+                  value={formData.series}
                   onChange={(event) =>
                     setFormData((prev) => ({
                       ...prev,
-                      registrationNumber: event.target.value,
+                      series: event.target.value.toUpperCase(),
                     }))
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="B-TR-011"
+                  placeholder="WDB12345678901234"
                 />
               </div>
 
@@ -260,18 +287,18 @@ export default function Dashboard({
                 <select
                   id="trailerType"
                   required
-                  value={formData.type}
+                  value={formData.vehicleType}
                   onChange={(event) =>
                     setFormData((prev) => ({
                       ...prev,
-                      type: event.target.value,
+                      vehicleType: event.target.value as VehicleType,
                     }))
                   }
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
                   {trailerTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
+                    <option key={type.value} value={type.value}>
+                      {type.label}
                     </option>
                   ))}
                 </select>
@@ -299,19 +326,27 @@ export default function Dashboard({
                 />
               </div>
 
+              {submitError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {submitError}
+                </div>
+              )}
+
               <DialogFooter>
                 <button
                   type="button"
                   onClick={() => handleDialogOpenChange(false)}
+                  disabled={isSubmitting}
                   className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
                 >
                   Anuleaza
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                  disabled={isSubmitting}
+                  className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-400"
                 >
-                  Salveaza
+                  {isSubmitting ? "Se salveaza..." : "Salveaza"}
                 </button>
               </DialogFooter>
             </form>
