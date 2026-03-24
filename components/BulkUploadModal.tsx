@@ -1,28 +1,37 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useApp } from '@/lib/app-context';
-import { DocumentType } from '@/lib/types';
-import { X, Upload, FileText, AlertCircle, CheckCircle2, Loader } from 'lucide-react';
+import { useState } from "react";
+import { useApp } from "@/lib/app-context";
+import { DocumentType, DocumentUploadResponse } from "@/lib/types";
+import { calculateDocumentStatus } from "@/lib/mock-data";
+import {
+  X,
+  Upload,
+  FileText,
+  AlertCircle,
+  CheckCircle2,
+  Loader,
+} from "lucide-react";
 
-// Helper function for UUID generation
-function uuidv4() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+const ALLOWED_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+];
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DOCUMENT_TYPES: DocumentType[] = [
-  'ITP',
-  'RCA',
-  'Revizie Tehnica',
-  'Carnet Prometeu',
-  'Certificat Echilibru',
-  'Asigurare Marfa',
-  'Certificat Geumatic',
-  'Alte Documente'
+  "ITP",
+  "RCA",
+  "Revizie Tehnica",
+  "Carnet Prometeu",
+  "Certificat Echilibru",
+  "Asigurare Marfa",
+  "Certificat Geumatic",
+  "Alte Documente",
 ];
 
 interface DocumentForm {
@@ -30,10 +39,11 @@ interface DocumentForm {
   number: string;
   issueDate: string;
   expiryDate: string;
-  ocrConfidence?: 'high' | 'medium' | 'low';
+  ocrConfidence?: "high" | "medium" | "low";
 }
 
 interface UploadedFile {
+  file: File;
   name: string;
   data: DocumentForm;
   processing: boolean;
@@ -48,18 +58,20 @@ interface BulkUploadModalProps {
 // Mock OCR function to simulate document analysis
 const mockOCRProcess = async (fileName: string): Promise<DocumentForm> => {
   // Simulate processing delay
-  await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 800));
+  await new Promise((resolve) =>
+    setTimeout(resolve, 800 + Math.random() * 800),
+  );
 
   // Mock OCR extraction based on file name patterns
   const typePatterns: Record<string, DocumentType> = {
-    itp: 'ITP',
-    rca: 'RCA',
-    revizie: 'Revizie Tehnica',
-    carnet: 'Carnet Prometeu',
-    echilibru: 'Certificat Echilibru',
+    itp: "ITP",
+    rca: "RCA",
+    revizie: "Revizie Tehnica",
+    carnet: "Carnet Prometeu",
+    echilibru: "Certificat Echilibru",
   };
 
-  let detectedType: DocumentType = 'Alte Documente';
+  let detectedType: DocumentType = "Alte Documente";
   for (const [pattern, type] of Object.entries(typePatterns)) {
     if (fileName.toLowerCase().includes(pattern)) {
       detectedType = type;
@@ -67,22 +79,37 @@ const mockOCRProcess = async (fileName: string): Promise<DocumentForm> => {
     }
   }
 
-  const issueDate = new Date(2023, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1)
-    .toISOString().split('T')[0];
-  const expiryDate = new Date(2026, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1)
-    .toISOString().split('T')[0];
+  const issueDate = new Date(
+    2023,
+    Math.floor(Math.random() * 12),
+    Math.floor(Math.random() * 28) + 1,
+  )
+    .toISOString()
+    .split("T")[0];
+  const expiryDate = new Date(
+    2026,
+    Math.floor(Math.random() * 12),
+    Math.floor(Math.random() * 28) + 1,
+  )
+    .toISOString()
+    .split("T")[0];
 
   return {
     type: detectedType,
-    number: `RO-2024-${Math.floor(Math.random() * 999999).toString().padStart(6, '0')}`,
+    number: `RO-2024-${Math.floor(Math.random() * 999999)
+      .toString()
+      .padStart(6, "0")}`,
     issueDate,
     expiryDate,
-    ocrConfidence: Math.random() > 0.3 ? 'high' : 'medium',
+    ocrConfidence: Math.random() > 0.3 ? "high" : "medium",
   };
 };
 
-export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalProps) {
-  const { addDocument } = useApp();
+export default function BulkUploadModal({
+  trailerId,
+  onClose,
+}: BulkUploadModalProps) {
+  const { addDocument, uploadDocument, refreshTrailerDocuments } = useApp();
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -103,43 +130,71 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
     setIsProcessing(true);
 
     const newFiles: UploadedFile[] = [];
+    const today = new Date().toISOString().split("T")[0];
+    const nextYear = new Date(
+      new Date().setFullYear(new Date().getFullYear() + 1),
+    )
+      .toISOString()
+      .split("T")[0];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const defaultData: DocumentForm = {
+        type: "Alte Documente",
+        number: "",
+        issueDate: today,
+        expiryDate: nextYear,
+      };
+
+      if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+        newFiles.push({
+          file,
+          name: file.name,
+          data: defaultData,
+          processing: false,
+          error: "Tip de fișier neacceptat. Sunt acceptate: PDF, PNG, JPG.",
+        });
+        continue;
+      }
+
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        newFiles.push({
+          file,
+          name: file.name,
+          data: defaultData,
+          processing: false,
+          error: "Fișierul depășește dimensiunea maximă de 10MB.",
+        });
+        continue;
+      }
+
       newFiles.push({
+        file,
         name: file.name,
-        data: {
-          type: 'Alte Documente',
-          number: '',
-          issueDate: new Date().toISOString().split('T')[0],
-          expiryDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-        },
+        data: defaultData,
         processing: true,
       });
     }
 
     setUploadedFiles(newFiles);
 
-    // Process each file with OCR
+    // Pre-fill form fields via mock OCR for valid files only
     for (let i = 0; i < newFiles.length; i++) {
+      if (newFiles[i].error || !newFiles[i].processing) continue;
       try {
         const ocrData = await mockOCRProcess(newFiles[i].name);
-        setUploadedFiles(prev => {
+        setUploadedFiles((prev) => {
           const updated = [...prev];
-          updated[i] = {
-            ...updated[i],
-            data: ocrData,
-            processing: false,
-          };
+          updated[i] = { ...updated[i], data: ocrData, processing: false };
           return updated;
         });
-      } catch (error) {
-        setUploadedFiles(prev => {
+      } catch {
+        setUploadedFiles((prev) => {
           const updated = [...prev];
           updated[i] = {
             ...updated[i],
             processing: false,
-            error: 'Eroare în procesare OCR',
+            error: "Eroare în procesare OCR",
           };
           return updated;
         });
@@ -160,7 +215,11 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
     }
   };
 
-  const updateDocument = (index: number, field: keyof DocumentForm, value: string) => {
+  const updateDocument = (
+    index: number,
+    field: keyof DocumentForm,
+    value: string,
+  ) => {
     const newFiles = [...uploadedFiles];
     newFiles[index].data = { ...newFiles[index].data, [field]: value as any };
     setUploadedFiles(newFiles);
@@ -183,13 +242,15 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
 
     uploadedFiles.forEach((file, index) => {
       if (!file.data.number.trim()) {
-        newErrors[index] = 'Completați numărul documentului';
+        newErrors[index] = "Completați numărul documentului";
       } else if (!file.data.issueDate) {
-        newErrors[index] = 'Selectați data emiterii';
+        newErrors[index] = "Selectați data emiterii";
       } else if (!file.data.expiryDate) {
-        newErrors[index] = 'Selectați data expirării';
-      } else if (new Date(file.data.issueDate) > new Date(file.data.expiryDate)) {
-        newErrors[index] = 'Data expirării trebuie să fie după data emiterii';
+        newErrors[index] = "Selectați data expirării";
+      } else if (
+        new Date(file.data.issueDate) > new Date(file.data.expiryDate)
+      ) {
+        newErrors[index] = "Data expirării trebuie să fie după data emiterii";
       }
     });
 
@@ -200,31 +261,69 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateForms()) {
-      return;
-    }
+    if (!validateForms()) return;
 
     setIsSubmitting(true);
+    const newErrors: Record<number, string> = {};
+    const vehicleId = UUID_REGEX.test(trailerId) ? trailerId : undefined;
 
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const uploadedFile = uploadedFiles[i];
+      if (uploadedFile.error) {
+        newErrors[i] = uploadedFile.error;
+        continue;
+      }
 
-    uploadedFiles.forEach(file => {
-      addDocument(trailerId, {
-        id: `doc-${uuidv4()}`,
-        trailerId,
-        type: file.data.type,
-        number: file.data.number,
-        issueDate: file.data.issueDate,
-        expiryDate: file.data.expiryDate,
-        fileUrl: `mock://file/${file.data.number.replace(/\s/g, '-')}.pdf`,
-        uploadedAt: new Date().toISOString().split('T')[0],
-        status: 'NORMAL',
-      });
-    });
+      try {
+        const response: DocumentUploadResponse = await uploadDocument(
+          uploadedFile.file,
+          {
+            title: uploadedFile.data.number.trim() || uploadedFile.name,
+            type: uploadedFile.data.type,
+            issueDate: uploadedFile.data.issueDate,
+            expiryDate: uploadedFile.data.expiryDate,
+          },
+          vehicleId,
+        );
+
+        if (!vehicleId) {
+          addDocument(trailerId, {
+            id: response.id,
+            trailerId,
+            type: response.type as DocumentType,
+            number: response.title,
+            issueDate: response.issueDate,
+            expiryDate: response.expiryDate,
+            fileUrl:
+              response.filePath ??
+              `/public/uploads/documents/${response.fileName ?? ""}`,
+            uploadedAt: response.createdAt.split("T")[0],
+            status: calculateDocumentStatus(response.expiryDate),
+          });
+        }
+      } catch (err) {
+        newErrors[i] =
+          err instanceof Error
+            ? err.message
+            : "Eroare la încărcarea documentului.";
+      }
+    }
 
     setIsSubmitting(false);
-    onClose();
+
+    if (vehicleId) {
+      try {
+        await refreshTrailerDocuments(trailerId);
+      } catch {
+        // Keep upload result visible even if refresh fails.
+      }
+    }
+
+    if (Object.keys(newErrors).length === 0) {
+      onClose();
+    } else {
+      setErrors(newErrors);
+    }
   };
 
   return (
@@ -251,11 +350,15 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
-                isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'
-              } ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}
+                isDragging
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-300 bg-gray-50"
+              } ${isProcessing ? "opacity-50 pointer-events-none" : ""}`}
             >
               <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Trageți documentele aici</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Trageți documentele aici
+              </h3>
               <p className="text-gray-600 mb-4">sau</p>
               <label className="inline-block">
                 <span className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-colors">
@@ -270,7 +373,9 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                   disabled={isProcessing}
                 />
               </label>
-              <p className="text-sm text-gray-500 mt-4">Suportate: PDF, JPG, PNG</p>
+              <p className="text-sm text-gray-500 mt-4">
+                Suportate: PDF, JPG, PNG
+              </p>
             </div>
           ) : (
             // Uploaded Files List
@@ -279,7 +384,9 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                 <div
                   key={index}
                   className={`rounded-lg border p-6 transition-colors ${
-                    file.error ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'
+                    file.error
+                      ? "bg-red-50 border-red-200"
+                      : "bg-gray-50 border-gray-200"
                   }`}
                 >
                   {/* File Header */}
@@ -293,10 +400,19 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                         <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
                       )}
                       <div className="min-w-0">
-                        <p className="font-semibold text-gray-900 truncate">{file.name}</p>
+                        <p className="font-semibold text-gray-900 truncate">
+                          {file.name}
+                        </p>
                         {file.data.ocrConfidence && (
                           <p className="text-xs text-gray-600">
-                            OCR Încredere: <span className="font-medium">{file.data.ocrConfidence === 'high' ? 'Înaltă' : file.data.ocrConfidence === 'medium' ? 'Medie' : 'Joasă'}</span>
+                            OCR Încredere:{" "}
+                            <span className="font-medium">
+                              {file.data.ocrConfidence === "high"
+                                ? "Înaltă"
+                                : file.data.ocrConfidence === "medium"
+                                  ? "Medie"
+                                  : "Joasă"}
+                            </span>
                           </p>
                         )}
                       </div>
@@ -327,25 +443,35 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                         </label>
                         <select
                           value={file.data.type}
-                          onChange={(e) => updateDocument(index, 'type', e.target.value as DocumentType)}
+                          onChange={(e) =>
+                            updateDocument(
+                              index,
+                              "type",
+                              e.target.value as DocumentType,
+                            )
+                          }
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 bg-white border border-gray-300 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                         >
-                          {DOCUMENT_TYPES.map(type => (
-                            <option key={type} value={type}>{type}</option>
+                          {DOCUMENT_TYPES.map((type) => (
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
                           ))}
                         </select>
                       </div>
 
-                      {/* Document Number */}
+                      {/* Title */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Număr Document
+                          Titlu
                         </label>
                         <input
                           type="text"
                           value={file.data.number}
-                          onChange={(e) => updateDocument(index, 'number', e.target.value)}
+                          onChange={(e) =>
+                            updateDocument(index, "number", e.target.value)
+                          }
                           placeholder="ex: RO-2024-001234"
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 bg-white border border-gray-300 text-gray-900 placeholder-gray-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
@@ -360,7 +486,9 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                         <input
                           type="date"
                           value={file.data.issueDate}
-                          onChange={(e) => updateDocument(index, 'issueDate', e.target.value)}
+                          onChange={(e) =>
+                            updateDocument(index, "issueDate", e.target.value)
+                          }
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 bg-white border border-gray-300 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                         />
@@ -374,7 +502,9 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
                         <input
                           type="date"
                           value={file.data.expiryDate}
-                          onChange={(e) => updateDocument(index, 'expiryDate', e.target.value)}
+                          onChange={(e) =>
+                            updateDocument(index, "expiryDate", e.target.value)
+                          }
                           disabled={isSubmitting}
                           className="w-full px-3 py-2 bg-white border border-gray-300 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                         />
@@ -395,12 +525,15 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
               <button
                 type="button"
                 onClick={() => {
-                  const input = document.createElement('input');
-                  input.type = 'file';
+                  const input = document.createElement("input");
+                  input.type = "file";
                   input.multiple = true;
-                  input.accept = '.pdf,.jpg,.jpeg,.png';
+                  input.accept = ".pdf,.jpg,.jpeg,.png";
                   input.onchange = (e) => {
-                    if (e.target instanceof HTMLInputElement && e.target.files) {
+                    if (
+                      e.target instanceof HTMLInputElement &&
+                      e.target.files
+                    ) {
                       processFiles(e.target.files);
                     }
                   };
@@ -428,7 +561,9 @@ export default function BulkUploadModal({ trailerId, onClose }: BulkUploadModalP
             {uploadedFiles.length > 0 && (
               <button
                 type="submit"
-                disabled={isSubmitting || uploadedFiles.some(f => f.processing)}
+                disabled={
+                  isSubmitting || uploadedFiles.some((f) => f.processing)
+                }
                 className="flex-1 py-2 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:bg-gray-400 flex items-center justify-center gap-2 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? (

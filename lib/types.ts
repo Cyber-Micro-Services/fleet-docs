@@ -58,6 +58,23 @@ export interface VehicleResponse {
   fleetId?: string | null;
 }
 
+export interface DocumentUploadResponse {
+  id: string;
+  title: string;
+  type: string;
+  issueDate: string;
+  expiryDate: string;
+  ownerId?: string;
+  vehicleId?: string | null;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  ocrStatus?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface AppState {
   isAuthenticated: boolean;
   trailers: Trailer[];

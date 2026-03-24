@@ -1,23 +1,68 @@
-'use client';
+"use client";
 
-import { useApp } from '@/lib/app-context';
-import { AlertStatus } from '@/lib/types';
-import { ArrowLeft, Upload, Trash2, Download, AlertCircle, CheckCircle2, Clock, AlertTriangle, XCircle } from 'lucide-react';
-import DocumentCard from '@/components/DocumentCard';
-import BulkUploadModal from '@/components/BulkUploadModal';
-import { useState } from 'react';
+import { useApp } from "@/lib/app-context";
+import { AlertStatus } from "@/lib/types";
+import {
+  ArrowLeft,
+  Upload,
+  Trash2,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  XCircle,
+  Loader,
+} from "lucide-react";
+import DocumentCard from "@/components/DocumentCard";
+import BulkUploadModal from "@/components/BulkUploadModal";
+import { downloadMultipleFiles } from "@/lib/utils";
+import { useState } from "react";
 
-const statusConfig: Record<AlertStatus, { icon: React.ReactNode; label: string; color: string }> = {
-  EXPIRED: { icon: <XCircle className="w-4 h-4" />, label: 'EXPIRAT', color: 'bg-red-100 text-red-800 border-red-300' },
-  URGENT: { icon: <AlertTriangle className="w-4 h-4" />, label: 'URGENT', color: 'bg-red-100 text-red-800 border-red-300' },
-  ALERT: { icon: <AlertCircle className="w-4 h-4" />, label: 'ATENȚIE', color: 'bg-orange-100 text-orange-800 border-orange-300' },
-  WARNING: { icon: <Clock className="w-4 h-4" />, label: 'AVERTISMENT', color: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
-  NORMAL: { icon: <CheckCircle2 className="w-4 h-4" />, label: 'OK', color: 'bg-green-100 text-green-800 border-green-300' },
+const statusConfig: Record<
+  AlertStatus,
+  { icon: React.ReactNode; label: string; color: string }
+> = {
+  EXPIRED: {
+    icon: <XCircle className="w-4 h-4" />,
+    label: "EXPIRAT",
+    color: "bg-red-100 text-red-800 border-red-300",
+  },
+  URGENT: {
+    icon: <AlertTriangle className="w-4 h-4" />,
+    label: "URGENT",
+    color: "bg-red-100 text-red-800 border-red-300",
+  },
+  ALERT: {
+    icon: <AlertCircle className="w-4 h-4" />,
+    label: "ATENȚIE",
+    color: "bg-orange-100 text-orange-800 border-orange-300",
+  },
+  WARNING: {
+    icon: <Clock className="w-4 h-4" />,
+    label: "AVERTISMENT",
+    color: "bg-yellow-100 text-yellow-800 border-yellow-300",
+  },
+  NORMAL: {
+    icon: <CheckCircle2 className="w-4 h-4" />,
+    label: "OK",
+    color: "bg-green-100 text-green-800 border-green-300",
+  },
 };
 
-export default function TrailerDetails({ trailerId, onBack }: { trailerId: string; onBack: () => void }) {
+export default function TrailerDetails({
+  trailerId,
+  onBack,
+}: {
+  trailerId: string;
+  onBack: () => void;
+}) {
   const { getTrailerById, deleteDocument } = useApp();
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [isBulkDownloading, setIsBulkDownloading] = useState(false);
+  const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
+    null,
+  );
   const trailer = getTrailerById(trailerId);
 
   if (!trailer) {
@@ -38,27 +83,44 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
   }
 
   const handleDeleteDocument = (documentId: string) => {
-    if (confirm('Sigur doriți să ștergeți acest document?')) {
+    if (confirm("Sigur doriți să ștergeți acest document?")) {
       deleteDocument(trailerId, documentId);
     }
   };
 
-  const handleBulkDownload = () => {
+  const handleBulkDownload = async () => {
     if (trailer.documents.length === 0) {
-      alert('Nu sunt documente de descărcat');
+      setBulkDownloadMessage("Nu sunt documente de descărcat");
       return;
     }
-    
-    // Create a list of documents to download
-    const documentList = trailer.documents
-      .map(doc => `${doc.type}: ${doc.number} (Expiră: ${new Date(doc.expiryDate).toLocaleDateString('ro-RO')})`)
-      .join('\n');
-    
-    // Log to console as mock download
-    console.log('Bulk download initiated for:', documentList);
-    
-    // In a real app, this would trigger actual file downloads
-    alert(`Descărcare în curs a ${trailer.documents.length} documente:\n\n${documentList}`);
+
+    setIsBulkDownloading(true);
+    setBulkDownloadMessage(null);
+
+    try {
+      const files = trailer.documents.map((doc) => ({
+        url: doc.fileUrl,
+        name: `${doc.type}_${doc.number}_${new Date(doc.uploadedAt).toISOString().split("T")[0]}`,
+      }));
+
+      const result = await downloadMultipleFiles(files);
+
+      if (result.failed === 0) {
+        setBulkDownloadMessage(
+          `✓ S-au descărcat cu succes ${result.success} documente.`,
+        );
+      } else {
+        setBulkDownloadMessage(
+          `S-au descărcat ${result.success} documente.\n${result.failed} au eșuat.\n\n${result.errors.join("\n")}`,
+        );
+      }
+    } catch (error) {
+      setBulkDownloadMessage(
+        error instanceof Error ? error.message : "Eroare la descărcare bulk.",
+      );
+    } finally {
+      setIsBulkDownloading(false);
+    }
   };
 
   return (
@@ -75,8 +137,12 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
               <ArrowLeft className="w-5 h-5 text-gray-700" />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{trailer.registrationNumber}</h1>
-              <p className="text-sm text-gray-600">Detalii Remorcă și Documente</p>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {trailer.registrationNumber}
+              </h1>
+              <p className="text-sm text-gray-600">
+                Detalii Remorcă și Documente
+              </p>
             </div>
           </div>
         </div>
@@ -86,11 +152,15 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Trailer Info */}
         <div className="bg-white rounded-lg border border-gray-200 p-6 mb-8 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">Informații Generale</h2>
+          <h2 className="text-lg font-bold text-gray-900 mb-4">
+            Informații Generale
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <p className="text-sm text-gray-600 mb-1">Număr Înmatriculare</p>
-              <p className="text-gray-900 font-semibold">{trailer.registrationNumber}</p>
+              <p className="text-gray-900 font-semibold">
+                {trailer.registrationNumber}
+              </p>
             </div>
             <div>
               <p className="text-sm text-gray-600 mb-1">Tip</p>
@@ -98,7 +168,9 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
             </div>
             <div>
               <p className="text-sm text-gray-600 mb-1">Producător</p>
-              <p className="text-gray-900 font-semibold">{trailer.manufacturer}</p>
+              <p className="text-gray-900 font-semibold">
+                {trailer.manufacturer}
+              </p>
             </div>
             <div>
               <p className="text-sm text-gray-600 mb-1">Anul Fabricației</p>
@@ -110,15 +182,26 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
         {/* Documents Section */}
         <div>
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-bold text-gray-900">Documente ({trailer.documents.length})</h2>
+            <h2 className="text-lg font-bold text-gray-900">
+              Documente ({trailer.documents.length})
+            </h2>
             <div className="flex gap-2">
               <button
                 onClick={handleBulkDownload}
-                disabled={trailer.documents.length === 0}
+                disabled={trailer.documents.length === 0 || isBulkDownloading}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
-                <Download className="w-4 h-4" />
-                Descarcă Tot
+                {isBulkDownloading ? (
+                  <>
+                    <Loader className="w-4 h-4 animate-spin" />
+                    Se descarcă...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Descarcă Tot
+                  </>
+                )}
               </button>
               <button
                 onClick={() => setShowUploadModal(true)}
@@ -129,6 +212,18 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
               </button>
             </div>
           </div>
+
+          {bulkDownloadMessage && (
+            <div
+              className={`mb-6 p-4 rounded-lg border ${
+                bulkDownloadMessage.startsWith("✓")
+                  ? "bg-green-50 border-green-200 text-green-700"
+                  : "bg-orange-50 border-orange-200 text-orange-700"
+              }`}
+            >
+              {bulkDownloadMessage}
+            </div>
+          )}
 
           {trailer.documents.length === 0 ? (
             <div className="bg-white rounded-lg border border-gray-200 p-12 text-center shadow-sm">
@@ -143,7 +238,7 @@ export default function TrailerDetails({ trailerId, onBack }: { trailerId: strin
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {trailer.documents.map(document => (
+              {trailer.documents.map((document) => (
                 <DocumentCard
                   key={document.id}
                   document={document}

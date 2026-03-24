@@ -18,6 +18,7 @@ import {
   CreateVehiclePayload,
   VehicleResponse,
   VehicleType,
+  DocumentUploadResponse,
 } from "./types";
 import {
   generateMockTrailers,
@@ -40,6 +41,18 @@ interface AppContextType {
   ) => Promise<Response>;
   trailers: Trailer[];
   createVehicle: (payload: CreateVehiclePayload) => Promise<void>;
+  uploadDocument: (
+    file: File,
+    metadata: {
+      title: string;
+      type: string;
+      issueDate: string;
+      expiryDate: string;
+    },
+    vehicleId?: string,
+  ) => Promise<DocumentUploadResponse>;
+  getVehicleDocuments: (vehicleId: string) => Promise<DocumentUploadResponse[]>;
+  refreshTrailerDocuments: (trailerId: string) => Promise<void>;
   addDocument: (trailerId: string, document: Document) => void;
   updateDocument: (
     trailerId: string,
@@ -59,6 +72,8 @@ const AUTH_REFRESH_TOKEN_KEY = "auth_refresh_token";
 const AUTH_USER_KEY = "auth_user";
 const TEST_USERNAME = "admin";
 const TEST_PASSWORD = "admin";
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface RefreshPayload {
   refreshToken: string;
@@ -179,6 +194,42 @@ function mapVehicleToTrailer(vehicle: VehicleResponse): Trailer {
     manufacturedAtUtc,
     documents: [],
     urgencyScore: 0,
+  };
+}
+
+function parseDocumentType(type: string): Document["type"] {
+  const supportedTypes: Document["type"][] = [
+    "ITP",
+    "RCA",
+    "Revizie Tehnica",
+    "Carnet Prometeu",
+    "Certificat Echilibru",
+    "Asigurare Marfa",
+    "Certificat Geumatic",
+    "Alte Documente",
+  ];
+
+  return supportedTypes.includes(type as Document["type"])
+    ? (type as Document["type"])
+    : "Alte Documente";
+}
+
+function mapApiDocumentToLocal(
+  apiDocument: DocumentUploadResponse,
+  trailerId: string,
+): Document {
+  return {
+    id: apiDocument.id,
+    trailerId,
+    type: parseDocumentType(apiDocument.type),
+    number: apiDocument.title,
+    issueDate: apiDocument.issueDate,
+    expiryDate: apiDocument.expiryDate,
+    fileUrl:
+      apiDocument.filePath ??
+      `/public/uploads/documents/${apiDocument.fileName ?? ""}`,
+    uploadedAt: apiDocument.createdAt.split("T")[0],
+    status: calculateDocumentStatus(apiDocument.expiryDate),
   };
 }
 
@@ -393,6 +444,150 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const uploadDocument = useCallback(
+    async (
+      file: File,
+      metadata: {
+        title: string;
+        type: string;
+        issueDate: string;
+        expiryDate: string;
+      },
+      vehicleId?: string,
+    ): Promise<DocumentUploadResponse> => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("title", metadata.title.trim());
+      formData.append("type", metadata.type);
+      formData.append("issueDate", metadata.issueDate);
+      formData.append("expiryDate", metadata.expiryDate);
+      if (vehicleId) {
+        formData.append("vehicleId", vehicleId);
+      }
+
+      let response: Response;
+      try {
+        response = await authFetch("/api/documents/upload", {
+          method: "POST",
+          body: formData,
+        });
+      } catch {
+        throw new Error(
+          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+        );
+      }
+
+      let responsePayload: unknown = null;
+      try {
+        responsePayload = await response.json();
+      } catch {
+        responsePayload = null;
+      }
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          throw new Error(
+            normalizeErrorMessage(
+              responsePayload,
+              "Date invalide. Verifica tipul fisierului (PDF/PNG/JPG), dimensiunea maxima 10MB si campurile obligatorii.",
+            ),
+          );
+        }
+        if (response.status === 401) {
+          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+        }
+        if (response.status === 404) {
+          throw new Error(
+            "Vehiculul specificat nu a fost gasit in baza de date.",
+          );
+        }
+        throw new Error(
+          normalizeErrorMessage(
+            responsePayload,
+            "Nu am putut incarca documentul.",
+          ),
+        );
+      }
+
+      return responsePayload as DocumentUploadResponse;
+    },
+    [authFetch],
+  );
+
+  const getVehicleDocuments = useCallback(
+    async (vehicleId: string): Promise<DocumentUploadResponse[]> => {
+      let response: Response;
+
+      try {
+        response = await authFetch(`/api/documents/vehicle/${vehicleId}`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      } catch {
+        throw new Error(
+          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+        );
+      }
+
+      let responsePayload: unknown = null;
+      try {
+        responsePayload = await response.json();
+      } catch {
+        responsePayload = null;
+      }
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+        }
+        throw new Error(
+          normalizeErrorMessage(
+            responsePayload,
+            "Nu am putut incarca lista de documente pentru vehicul.",
+          ),
+        );
+      }
+
+      if (!Array.isArray(responsePayload)) {
+        return [];
+      }
+
+      return responsePayload as DocumentUploadResponse[];
+    },
+    [authFetch],
+  );
+
+  const refreshTrailerDocuments = useCallback(
+    async (trailerId: string): Promise<void> => {
+      if (!UUID_REGEX.test(trailerId)) {
+        return;
+      }
+
+      const apiDocuments = await getVehicleDocuments(trailerId);
+      const mappedDocuments = apiDocuments.map((doc) =>
+        mapApiDocumentToLocal(doc, trailerId),
+      );
+
+      setTrailers((prevTrailers) =>
+        prevTrailers.map((trailer) => {
+          if (trailer.id !== trailerId) {
+            return trailer;
+          }
+
+          const updatedTrailer = {
+            ...trailer,
+            documents: mappedDocuments,
+          };
+          updatedTrailer.urgencyScore = calculateUrgencyScore(mappedDocuments);
+          return updatedTrailer;
+        }),
+      );
+    },
+    [getVehicleDocuments],
+  );
+
   const addDocument = useCallback((trailerId: string, document: Document) => {
     setTrailers((prevTrailers) =>
       prevTrailers.map((trailer) => {
@@ -552,6 +747,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         authFetch,
         trailers,
         createVehicle,
+        uploadDocument,
+        getVehicleDocuments,
+        refreshTrailerDocuments,
         addDocument,
         updateDocument,
         deleteDocument,
