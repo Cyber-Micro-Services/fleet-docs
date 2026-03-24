@@ -36,6 +36,12 @@ interface AppContextType {
     init?: RequestInit,
   ) => Promise<Response>;
   trailers: Trailer[];
+  addTrailer: (payload: {
+    registrationNumber: string;
+    type: string;
+    manufacturer: string;
+    manufactureDate: string;
+  }) => void;
   addDocument: (trailerId: string, document: Document) => void;
   updateDocument: (
     trailerId: string,
@@ -365,6 +371,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const addTrailer = useCallback(
+    (payload: {
+      registrationNumber: string;
+      type: string;
+      manufacturer: string;
+      manufactureDate: string;
+    }) => {
+      const manufactureDateUtc = new Date(
+        `${payload.manufactureDate}T00:00:00.000Z`,
+      ).toISOString();
+
+      const newTrailer: Trailer = {
+        id: `trailer-${crypto.randomUUID()}`,
+        registrationNumber: payload.registrationNumber.trim(),
+        type: payload.type,
+        manufacturer: payload.manufacturer.trim(),
+        year: new Date(manufactureDateUtc).getUTCFullYear(),
+        manufacturedAtUtc: manufactureDateUtc,
+        documents: [],
+        urgencyScore: 0,
+      };
+
+      setTrailers((prevTrailers) => [newTrailer, ...prevTrailers]);
+    },
+    [],
+  );
+
   const updateDocument = useCallback(
     (trailerId: string, documentId: string, updates: Partial<Document>) => {
       setTrailers((prevTrailers) =>
@@ -433,6 +466,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         getAuthHeaders,
         authFetch,
         trailers,
+        addTrailer,
         addDocument,
         updateDocument,
         deleteDocument,

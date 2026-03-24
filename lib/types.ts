@@ -28,6 +28,7 @@ export interface Trailer {
   type: string;
   manufacturer: string;
   year: number;
+  manufacturedAtUtc?: string;
   documents: Document[];
   urgencyScore: number; // 0-100, higher = more urgent
 }
