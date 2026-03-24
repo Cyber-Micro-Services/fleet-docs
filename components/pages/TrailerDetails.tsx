@@ -60,6 +60,7 @@ export default function TrailerDetails({
   const { getTrailerById, deleteDocument } = useApp();
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
+  const [isDeletingDocument, setIsDeletingDocument] = useState(false);
   const [bulkDownloadMessage, setBulkDownloadMessage] = useState<string | null>(
     null,
   );
@@ -82,9 +83,22 @@ export default function TrailerDetails({
     );
   }
 
-  const handleDeleteDocument = (documentId: string) => {
-    if (confirm("Sigur doriți să ștergeți acest document?")) {
-      deleteDocument(trailerId, documentId);
+  const handleDeleteDocument = async (documentId: string) => {
+    if (!confirm("Sigur doriți să ștergeți acest document?")) {
+      return;
+    }
+
+    setIsDeletingDocument(true);
+    setBulkDownloadMessage(null);
+
+    try {
+      await deleteDocument(trailerId, documentId);
+    } catch (error) {
+      setBulkDownloadMessage(
+        error instanceof Error ? error.message : "Nu am putut sterge documentul.",
+      );
+    } finally {
+      setIsDeletingDocument(false);
     }
   };
 
@@ -243,7 +257,11 @@ export default function TrailerDetails({
                   key={document.id}
                   document={document}
                   statusConfig={statusConfig}
-                  onDelete={() => handleDeleteDocument(document.id)}
+                  onDelete={() => {
+                    if (!isDeletingDocument) {
+                      void handleDeleteDocument(document.id);
+                    }
+                  }}
                 />
               ))}
             </div>

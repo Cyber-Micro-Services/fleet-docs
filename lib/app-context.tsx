@@ -59,7 +59,7 @@ interface AppContextType {
     documentId: string,
     updates: Partial<Document>,
   ) => void;
-  deleteDocument: (trailerId: string, documentId: string) => void;
+  deleteDocument: (trailerId: string, documentId: string) => Promise<void>;
   getTrailersSorted: () => Trailer[];
   getTrailerById: (id: string) => Trailer | undefined;
 }
@@ -231,6 +231,23 @@ function mapApiDocumentToLocal(
     uploadedAt: apiDocument.createdAt.split("T")[0],
     status: calculateDocumentStatus(apiDocument.expiryDate),
   };
+}
+
+function removeDocumentFromTrailer(
+  trailers: Trailer[],
+  trailerId: string,
+  documentId: string,
+): Trailer[] {
+  return trailers.map((trailer) => {
+    if (trailer.id !== trailerId) {
+      return trailer;
+    }
+
+    const newDocuments = trailer.documents.filter((doc) => doc.id !== documentId);
+    const updatedTrailer = { ...trailer, documents: newDocuments };
+    updatedTrailer.urgencyScore = calculateUrgencyScore(newDocuments);
+    return updatedTrailer;
+  });
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -701,22 +718,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const deleteDocument = useCallback(
-    (trailerId: string, documentId: string) => {
+    async (trailerId: string, documentId: string): Promise<void> => {
+      // Keep local behavior for mock documents with non-UUID ids.
+      if (!UUID_REGEX.test(documentId)) {
+        setTrailers((prevTrailers) =>
+          removeDocumentFromTrailer(prevTrailers, trailerId, documentId),
+        );
+        return;
+      }
+
+      let response: Response;
+
+      try {
+        response = await authFetch(`/api/documents/${documentId}`, {
+          method: "DELETE",
+        });
+      } catch {
+        throw new Error(
+          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+        );
+      }
+
+      if (!response.ok) {
+        let responsePayload: unknown = null;
+        try {
+          responsePayload = await response.json();
+        } catch {
+          responsePayload = null;
+        }
+
+        if (response.status === 400) {
+          throw new Error(
+            normalizeErrorMessage(
+              responsePayload,
+              "ID-ul documentului este invalid.",
+            ),
+          );
+        }
+
+        if (response.status === 401) {
+          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+        }
+
+        if (response.status === 404) {
+          throw new Error("Documentul nu a fost gasit.");
+        }
+
+        throw new Error(
+          normalizeErrorMessage(
+            responsePayload,
+            "Nu am putut sterge documentul.",
+          ),
+        );
+      }
+
       setTrailers((prevTrailers) =>
-        prevTrailers.map((trailer) => {
-          if (trailer.id === trailerId) {
-            const newDocuments = trailer.documents.filter(
-              (doc) => doc.id !== documentId,
-            );
-            const updatedTrailer = { ...trailer, documents: newDocuments };
-            updatedTrailer.urgencyScore = calculateUrgencyScore(newDocuments);
-            return updatedTrailer;
-          }
-          return trailer;
-        }),
+        removeDocumentFromTrailer(prevTrailers, trailerId, documentId),
       );
     },
-    [],
+    [authFetch],
   );
 
   const getTrailersSorted = useCallback((): Trailer[] => {
