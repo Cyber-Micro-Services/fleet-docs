@@ -10,6 +10,14 @@ export type DocumentType =
 
 export type AlertStatus = "EXPIRED" | "URGENT" | "ALERT" | "WARNING" | "NORMAL";
 
+export type VehicleType =
+  | "SEMIREMORCA_FURGON"
+  | "SEMIREMORCA_CISTERNA"
+  | "SEMIREMORCA_PLATFORMA"
+  | "REMORCA_PLATFORMA"
+  | "CAMION"
+  | "CAP_CAMION";
+
 export interface Document {
   id: string;
   trailerId: string;
@@ -31,6 +39,40 @@ export interface Trailer {
   manufacturedAtUtc?: string;
   documents: Document[];
   urgencyScore: number; // 0-100, higher = more urgent
+}
+
+export interface CreateVehiclePayload {
+  series: string;
+  manufacturer: string;
+  vehicleType: VehicleType;
+  manufacturedAtUtc: string;
+  fleetId?: string;
+}
+
+export interface VehicleResponse {
+  id?: string;
+  series: string;
+  manufacturer: string;
+  vehicleType: VehicleType;
+  manufacturedAtUtc: string;
+  fleetId?: string | null;
+}
+
+export interface DocumentUploadResponse {
+  id: string;
+  title: string;
+  type: string;
+  issueDate: string;
+  expiryDate: string;
+  ownerId?: string;
+  vehicleId?: string | null;
+  fileName?: string;
+  filePath?: string;
+  mimeType?: string;
+  fileSize?: number;
+  ocrStatus?: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AppState {
