@@ -58,7 +58,13 @@ export default function Dashboard({
 }: {
   onSelectTrailer: (trailerId: string) => void;
 }) {
-  const { logout, getTrailersSorted, createVehicle } = useApp();
+  const {
+    logout,
+    getTrailersSorted,
+    createVehicle,
+    trailersLoading,
+    trailersError,
+  } = useApp();
   const sortedTrailers = getTrailersSorted();
   const [isAddTrailerOpen, setIsAddTrailerOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -203,7 +209,18 @@ export default function Dashboard({
             </button>
           </div>
 
-          {sortedTrailers.length === 0 ? (
+          {trailersLoading ? (
+            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center shadow-sm">
+              <p className="text-gray-600">Se încarcă vehiculele...</p>
+            </div>
+          ) : trailersError ? (
+            <div className="bg-white rounded-lg border border-red-200 p-8 text-center shadow-sm">
+              <p className="text-red-700 font-medium">
+                Nu am putut încărca vehiculele
+              </p>
+              <p className="mt-2 text-sm text-red-600">{trailersError}</p>
+            </div>
+          ) : sortedTrailers.length === 0 ? (
             <div className="bg-white rounded-lg border border-gray-200 p-8 text-center shadow-sm">
               <p className="text-gray-600">Nu sunt remorci disponibile</p>
             </div>

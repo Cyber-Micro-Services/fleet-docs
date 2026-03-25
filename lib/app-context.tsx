@@ -20,11 +20,7 @@ import {
   VehicleType,
   DocumentUploadResponse,
 } from "./types";
-import {
-  generateMockTrailers,
-  calculateDocumentStatus,
-  calculateUrgencyScore,
-} from "./mock-data";
+import { calculateDocumentStatus, calculateUrgencyScore } from "./mock-data";
 
 interface AppContextType {
   isAuthenticated: boolean;
@@ -40,6 +36,8 @@ interface AppContextType {
     init?: RequestInit,
   ) => Promise<Response>;
   trailers: Trailer[];
+  trailersLoading: boolean;
+  trailersError: string | null;
   createVehicle: (payload: CreateVehiclePayload) => Promise<void>;
   uploadDocument: (
     file: File,
@@ -70,8 +68,6 @@ const API_BASE_URL = "/api/auth";
 const AUTH_TOKEN_KEY = "auth_access_token";
 const AUTH_REFRESH_TOKEN_KEY = "auth_refresh_token";
 const AUTH_USER_KEY = "auth_user";
-const TEST_USERNAME = "admin";
-const TEST_PASSWORD = "admin";
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -243,7 +239,9 @@ function removeDocumentFromTrailer(
       return trailer;
     }
 
-    const newDocuments = trailer.documents.filter((doc) => doc.id !== documentId);
+    const newDocuments = trailer.documents.filter(
+      (doc) => doc.id !== documentId,
+    );
     const updatedTrailer = { ...trailer, documents: newDocuments };
     updatedTrailer.urgencyScore = calculateUrgencyScore(newDocuments);
     return updatedTrailer;
@@ -256,6 +254,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [trailers, setTrailers] = useState<Trailer[]>([]);
+  const [trailersLoading, setTrailersLoading] = useState(false);
+  const [trailersError, setTrailersError] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
   const refreshTokenRef = useRef<string | null>(null);
 
@@ -370,43 +370,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [refreshAuthSession],
   );
 
-  useEffect(() => {
-    if (isAuthenticated && trailers.length === 0) {
-      setTrailers(generateMockTrailers());
+  const getVehicles = useCallback(async (): Promise<VehicleResponse[]> => {
+    let response: Response;
+
+    try {
+      response = await authFetch("/api/vehicles", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    } catch {
+      throw new Error(
+        "Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.",
+      );
     }
-  }, [isAuthenticated, trailers.length]);
+
+    let responsePayload: unknown = null;
+    try {
+      responsePayload = await response.json();
+    } catch {
+      responsePayload = null;
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error(
+          "Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.",
+        );
+      }
+
+      throw new Error(
+        normalizeErrorMessage(
+          responsePayload,
+          "Nu am putut incarca vehiculele.",
+        ),
+      );
+    }
+
+    if (!Array.isArray(responsePayload)) {
+      return [];
+    }
+
+    return responsePayload.filter(isVehicleResponse);
+  }, [authFetch]);
 
   const login = useCallback(
     async (payload: LoginPayload): Promise<void> => {
-      if (
-        payload.email === TEST_USERNAME &&
-        payload.password === TEST_PASSWORD
-      ) {
-        const now = new Date().toISOString();
-        const testUser: AuthUser = {
-          id: "local-admin",
-          firstName: "Admin",
-          lastName: "Test",
-          email: TEST_USERNAME,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        setAccessToken("local-admin-token");
-        setRefreshToken("local-admin-refresh-token");
-        setAuthUser(testUser);
-        setIsAuthenticated(true);
-        accessTokenRef.current = "local-admin-token";
-        refreshTokenRef.current = "local-admin-refresh-token";
-        localStorage.setItem(AUTH_TOKEN_KEY, "local-admin-token");
-        localStorage.setItem(
-          AUTH_REFRESH_TOKEN_KEY,
-          "local-admin-refresh-token",
-        );
-        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(testUser));
-        return;
-      }
-
       const responsePayload = await requestAuth("login", payload);
       if (!isAuthResponse(responsePayload)) {
         throw new Error("Invalid login response");
@@ -514,9 +524,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
         }
         if (response.status === 404) {
-          throw new Error(
-            "Vehiculul specificat nu a fost gasit in baza de date.",
-          );
+          throw new Error("Vehiculul nu exista sau nu iti apartine.");
         }
         throw new Error(
           normalizeErrorMessage(
@@ -558,6 +566,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!response.ok) {
         if (response.status === 401) {
           throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+        }
+        if (response.status === 404) {
+          throw new Error("Vehiculul nu exista sau nu iti apartine.");
         }
         throw new Error(
           normalizeErrorMessage(
@@ -604,6 +615,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [getVehicleDocuments],
   );
+
+  const refreshTrailers = useCallback(async (): Promise<void> => {
+    setTrailersLoading(true);
+    setTrailersError(null);
+
+    try {
+      const vehicles = await getVehicles();
+      const trailersWithDocuments = await Promise.all(
+        vehicles.map(async (vehicle) => {
+          const trailer = mapVehicleToTrailer(vehicle);
+
+          if (!trailer.id || !UUID_REGEX.test(trailer.id)) {
+            return trailer;
+          }
+
+          try {
+            const apiDocuments = await getVehicleDocuments(trailer.id);
+            const mappedDocuments = apiDocuments.map((doc) =>
+              mapApiDocumentToLocal(doc, trailer.id!),
+            );
+
+            return {
+              ...trailer,
+              documents: mappedDocuments,
+              urgencyScore: calculateUrgencyScore(mappedDocuments),
+            };
+          } catch {
+            return trailer;
+          }
+        }),
+      );
+
+      setTrailers(trailersWithDocuments);
+    } catch (error) {
+      setTrailers([]);
+      setTrailersError(
+        error instanceof Error
+          ? error.message
+          : "Nu am putut incarca vehiculele.",
+      );
+    } finally {
+      setTrailersLoading(false);
+    }
+  }, [getVehicleDocuments, getVehicles]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setTrailers([]);
+      setTrailersError(null);
+      setTrailersLoading(false);
+      return;
+    }
+
+    void refreshTrailers();
+  }, [isAuthenticated, refreshTrailers]);
 
   const addDocument = useCallback((trailerId: string, document: Document) => {
     setTrailers((prevTrailers) =>
@@ -761,7 +827,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (response.status === 404) {
-          throw new Error("Documentul nu a fost gasit.");
+          throw new Error("Documentul nu exista sau nu iti apartine.");
         }
 
         throw new Error(
@@ -806,6 +872,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         getAuthHeaders,
         authFetch,
         trailers,
+        trailersLoading,
+        trailersError,
         createVehicle,
         uploadDocument,
         getVehicleDocuments,

@@ -95,7 +95,9 @@ export default function TrailerDetails({
       await deleteDocument(trailerId, documentId);
     } catch (error) {
       setBulkDownloadMessage(
-        error instanceof Error ? error.message : "Nu am putut sterge documentul.",
+        error instanceof Error
+          ? error.message
+          : "Nu am putut sterge documentul.",
       );
     } finally {
       setIsDeletingDocument(false);
