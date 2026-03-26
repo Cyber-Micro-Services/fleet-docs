@@ -65,32 +65,30 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
             const { execSync } = require('child_process');
             
             // Get changed files
-            const changedFiles = execSync('git diff origin/main --name-only').toString().split('\n').filter(f => f && /\.(ts|tsx)$/.test(f));
+            const changedFilesOutput = execSync('git diff origin/main --name-only').toString();
+            const changedFiles = changedFilesOutput.split('\n').filter(f => f && /\.(ts|tsx)$/.test(f));
             
             // Get diff stats
             const diffStat = execSync('git diff origin/main --stat').toString();
             
-            const comment = `## 🔍 Automatic Code Review Results
-            
-### Changed Files (TypeScript/JavaScript)
-${changedFiles.length > 0 ? changedFiles.map(f => `- ${f}`).join('\n') : 'No TypeScript/JavaScript files changed'}
-
-### Diff Statistics
-\`\`\`
-${diffStat}
-\`\`\`
-
-### Checks Performed
-- ✓ TypeScript type checking
-- ✓ ESLint validation
-- ✓ Code formatting
-- ✓ Security issue detection
-
-Run \`npm run review\` locally to see detailed analysis.`;
+            // Build comment with simpler string concatenation
+            let comment = '## 🔍 Automatic Code Review Results\n\n';
+            comment += '### Changed Files (TypeScript/JavaScript)\n';
+            if (changedFiles.length > 0) {
+              comment += changedFiles.map(f => '- ' + f).join('\n');
+            } else {
+              comment += 'No TypeScript/JavaScript files changed';
+            }
+            comment += '\n\n### Diff Statistics\n```\n' + diffStat + '```\n\n';
+            comment += '### Checks Performed\n';
+            comment += '- ✓ TypeScript type checking\n';
+            comment += '- ✓ ESLint validation\n';
+            comment += '- ✓ Code formatting\n';
+            comment += '- ✓ Security issue detection\n\n';
+            comment += 'Run `npm run review` locally to see detailed analysis.';
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
