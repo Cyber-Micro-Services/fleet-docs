@@ -1,0 +1,22 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+echo "🔍 Running pre-commit code review..."
+echo ""
+
+# Run lint-staged (handles linting and formatting of staged files)
+npx lint-staged
+
+# Store the exit code
+LINT_EXIT_CODE=$?
+
+if [ $LINT_EXIT_CODE -ne 0 ]; then
+  echo ""
+  echo "❌ Pre-commit checks failed!"
+  echo "Please fix the issues above and try again."
+  exit 1
+fi
+
+echo ""
+echo "✅ Pre-commit checks passed!"
+echo ""
