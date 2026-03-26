@@ -1,0 +1,167 @@
+name: Automatic Code Review
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    name: Review Code Changes
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript type check
+        run: npm run type-check
+        continue-on-error: true
+
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Run detailed code review analysis
+        id: review
+        run: node scripts/detailed-code-review.js
+        continue-on-error: true
+
+      - name: Post Individual Review Comments
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Try to read the findings file
+            let findings = null;
+            try {
+              if (fs.existsSync('code-review-findings.json')) {
+                const data = fs.readFileSync('code-review-findings.json', 'utf-8');
+                findings = JSON.parse(data);
+              }
+            } catch (e) {
+              console.log('Warning: Could not read findings file');
+            }
+            
+            // If no findings available, post summary message
+            if (!findings || !findings.findings) {
+              console.log('No detailed findings available');
+              return;
+            }
+            
+            const severityEmoji = {
+              critical: '🔴',
+              major: '🟠',
+              minor: '🟡',
+              suggestion: '💡',
+            };
+            
+            const severityLabel = {
+              critical: 'Critical',
+              major: 'Major',
+              minor: 'Minor',
+              suggestion: 'Suggestion',
+            };
+            
+            // Post individual comments for each finding
+            const allFindings = [
+              ...findings.findings.critical.map(f => ({ ...f, severity: 'critical' })),
+              ...findings.findings.major.map(f => ({ ...f, severity: 'major' })),
+              ...findings.findings.minor.map(f => ({ ...f, severity: 'minor' })),
+              ...findings.findings.suggestions.map(f => ({ ...f, severity: 'suggestion' })),
+            ];
+            
+            // Group by file for better organization
+            const findingsByFile = {};
+            allFindings.forEach(finding => {
+              if (!findingsByFile[finding.file]) {
+                findingsByFile[finding.file] = [];
+              }
+              findingsByFile[finding.file].push(finding);
+            });
+            
+            // Post a comment for each file with issues
+            for (const [file, fileFindings] of Object.entries(findingsByFile)) {
+              let fileComment = `## 📝 ${file}\n\n`;
+              
+              fileFindings.forEach((finding, index) => {
+                const emoji = severityEmoji[finding.severity];
+                const label = severityLabel[finding.severity];
+                fileComment += `### ${emoji} ${label} Issue\n`;
+                fileComment += `**Line ${finding.line}:** ${finding.issue}\n\n`;
+                fileComment += `💡 **Suggestion:** ${finding.suggestion}\n\n`;
+              });
+              
+              try {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: fileComment
+                });
+              } catch (e) {
+                console.log(`Failed to post comment for ${file}:`, e.message);
+              }
+            }
+            
+            // Post summary comment
+            if (allFindings.length === 0) {
+              const summaryComment = '## ✅ Code Review Summary\n\n' +
+                'Great work! No issues found in this review.\n\n' +
+                'All code changes adhere to best practices for TypeScript, React/Next.js, security, and performance.';
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: summaryComment
+              });
+            } else {
+              const summaryComment = `## 📊 Code Review Summary\n\n` +
+                `**Total Issues:** ${allFindings.length}\n\n` +
+                `- 🔴 Critical: ${findings.findings.critical.length}\n` +
+                `- 🟠 Major: ${findings.findings.major.length}\n` +
+                `- 🟡 Minor: ${findings.findings.minor.length}\n` +
+                `- 💡 Suggestions: ${findings.findings.suggestions.length}\n\n` +
+                `**Statistics:**\n` +
+                `- Files analyzed: ${findings.stats.filesChanged}\n` +
+                `- Lines added: +${findings.stats.linesAdded}\n` +
+                `- Lines deleted: -${findings.stats.linesDeleted}`;
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: summaryComment
+              });
+            }
+            
+            console.log(`✅ Posted ${allFindings.length} individual review comments`);
+
+      - name: Check for formatting issues
+        run: npx prettier --check "**/*.{ts,tsx,json,md}"
+        continue-on-error: true
