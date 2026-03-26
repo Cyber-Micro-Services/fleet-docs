@@ -439,7 +439,8 @@ async function performDetailedCodeReview() {
     }
 
     // Log findings
-    const summary = analyzer.generateJSON().summary;
+    const reviewData = analyzer.generateJSON();
+    const summary = reviewData.summary;
     log('cyan', '\n📊 Review Results:');
     log('red', `  🔴 Critical: ${summary.critical}`);
     log('yellow', `  🟠 Major: ${summary.major}`);
@@ -448,10 +449,15 @@ async function performDetailedCodeReview() {
 
     const markdown = analyzer.generateMarkdown();
 
+    // Write review data to JSON file for GitHub Actions
+    const outputFile = 'code-review-findings.json';
+    fs.writeFileSync(outputFile, JSON.stringify(reviewData, null, 2));
+    log('blue', `\n📄 Findings written to ${outputFile}`);
+
     if (process.env.GITHUB_OUTPUT) {
       // Write to GitHub Actions environment
       fs.appendFileSync(process.env.GITHUB_OUTPUT, `review_markdown<<EOF\n${markdown}\nEOF\n`);
-      fs.appendFileSync(process.env.GITHUB_OUTPUT, `review_json=${JSON.stringify(analyzer.generateJSON())}\n`);
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `review_json=${JSON.stringify(reviewData)}\n`);
     }
 
     log('green', '\n✅ Detailed Code Review Complete!\n');
@@ -460,7 +466,7 @@ async function performDetailedCodeReview() {
       success: true,
       review: {
         markdown,
-        json: analyzer.generateJSON(),
+        json: reviewData,
       },
     };
   } catch (error) {
