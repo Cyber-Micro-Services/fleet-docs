@@ -12,6 +12,7 @@ import {
   Trailer,
   Document,
   AuthUser,
+  AlertStatus,
   RegisterPayload,
   LoginPayload,
   AuthResponse,
@@ -60,6 +61,24 @@ interface AppContextType {
   deleteDocument: (trailerId: string, documentId: string) => Promise<void>;
   getTrailersSorted: () => Trailer[];
   getTrailerById: (id: string) => Trailer | undefined;
+  notifications: AppNotification[];
+  unreadNotificationsCount: number;
+  markNotificationAsRead: (notificationId: string) => void;
+  markAllNotificationsAsRead: () => void;
+  deleteNotification: (notificationId: string) => void;
+  clearNotifications: () => void;
+}
+
+export interface AppNotification {
+  id: string;
+  documentId: string;
+  trailerId: string;
+  trailerNumber: string;
+  documentType: string;
+  status: AlertStatus;
+  message: string;
+  createdAt: string;
+  read: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -256,6 +275,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [trailers, setTrailers] = useState<Trailer[]>([]);
   const [trailersLoading, setTrailersLoading] = useState(false);
   const [trailersError, setTrailersError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const accessTokenRef = useRef<string | null>(null);
   const refreshTokenRef = useRef<string | null>(null);
 
@@ -264,6 +284,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAuthUser(null);
     setAccessToken(null);
     setRefreshToken(null);
+    setNotifications([]);
     accessTokenRef.current = null;
     refreshTokenRef.current = null;
     localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -663,6 +684,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated) {
       setTrailers([]);
+      setNotifications([]);
       setTrailersError(null);
       setTrailersLoading(false);
       return;
@@ -670,6 +692,96 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     void refreshTrailers();
   }, [isAuthenticated, refreshTrailers]);
+
+  useEffect(() => {
+    setNotifications((prevNotifications) => {
+      const previousByDocumentId = new Map(
+        prevNotifications.map((notification) => [
+          notification.documentId,
+          notification,
+        ]),
+      );
+
+      const nextNotifications: AppNotification[] = [];
+
+      trailers.forEach((trailer) => {
+        trailer.documents.forEach((doc) => {
+          if (
+            doc.status !== "URGENT" &&
+            doc.status !== "EXPIRED" &&
+            doc.status !== "ALERT"
+          ) {
+            return;
+          }
+
+          const existing = previousByDocumentId.get(doc.id);
+          let message = "";
+
+          if (doc.status === "EXPIRED") {
+            message = `Document expirat: ${doc.type} pentru remorca ${trailer.registrationNumber}`;
+          } else if (doc.status === "URGENT") {
+            message = `Urgent! ${doc.type} expiră curând pentru remorca ${trailer.registrationNumber}`;
+          } else {
+            message = `Atenție! ${doc.type} va expira în curând pentru remorca ${trailer.registrationNumber}`;
+          }
+
+          nextNotifications.push({
+            id: existing?.id ?? `notif-${doc.id}`,
+            documentId: doc.id,
+            trailerId: trailer.id,
+            trailerNumber: trailer.registrationNumber,
+            documentType: doc.type,
+            status: doc.status,
+            message,
+            createdAt: existing?.createdAt ?? new Date().toISOString(),
+            read: existing?.read ?? false,
+          });
+        });
+      });
+
+      nextNotifications.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+
+      return nextNotifications;
+    });
+  }, [trailers]);
+
+  const markNotificationAsRead = useCallback((notificationId: string) => {
+    setNotifications((prevNotifications) =>
+      prevNotifications.map((notification) =>
+        notification.id === notificationId
+          ? { ...notification, read: true }
+          : notification,
+      ),
+    );
+  }, []);
+
+  const markAllNotificationsAsRead = useCallback(() => {
+    setNotifications((prevNotifications) =>
+      prevNotifications.map((notification) => ({
+        ...notification,
+        read: true,
+      })),
+    );
+  }, []);
+
+  const deleteNotification = useCallback((notificationId: string) => {
+    setNotifications((prevNotifications) =>
+      prevNotifications.filter(
+        (notification) => notification.id !== notificationId,
+      ),
+    );
+  }, []);
+
+  const clearNotifications = useCallback(() => {
+    setNotifications([]);
+  }, []);
+
+  const unreadNotificationsCount = notifications.filter(
+    (notification) => !notification.read,
+  ).length;
 
   const addDocument = useCallback((trailerId: string, document: Document) => {
     setTrailers((prevTrailers) =>
@@ -883,6 +995,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         deleteDocument,
         getTrailersSorted,
         getTrailerById,
+        notifications,
+        unreadNotificationsCount,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
+        deleteNotification,
+        clearNotifications,
       }}
     >
       {children}

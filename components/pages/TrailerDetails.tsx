@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import DocumentCard from "@/components/DocumentCard";
 import BulkUploadModal from "@/components/BulkUploadModal";
+import NotificationCenter from "@/components/NotificationCenter";
 import { downloadMultipleFiles } from "@/lib/utils";
 import { useState } from "react";
 
@@ -144,22 +145,25 @@ export default function TrailerDetails({
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={onBack}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Înapoi la dashboard"
-            >
-              <ArrowLeft className="w-5 h-5 text-gray-700" />
-            </button>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                {trailer.registrationNumber}
-              </h1>
-              <p className="text-sm text-gray-600">
-                Detalii Remorcă și Documente
-              </p>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={onBack}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Înapoi la dashboard"
+              >
+                <ArrowLeft className="w-5 h-5 text-gray-700" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {trailer.registrationNumber}
+                </h1>
+                <p className="text-sm text-gray-600">
+                  Detalii Remorcă și Documente
+                </p>
+              </div>
             </div>
+            <NotificationCenter />
           </div>
         </div>
       </header>
