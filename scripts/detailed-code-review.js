@@ -401,14 +401,32 @@ async function performDetailedCodeReview() {
     // Get list of changed files
     const changedFiles = runCommand('git diff origin/main --name-only', true)
       .split('\n')
-      .filter((f) => f && /\.(ts|tsx|js|jsx)$/.test(f));
+      .filter((f) => f && /\.(ts|tsx|js|jsx)$/.test(f))
+      .filter((f) => {
+        // Exclude code review automation files and tests
+        const excludePatterns = [
+          'scripts/detailed-code-review.js',
+          'scripts/code-review.js',
+          '.github/workflows/code-review.yml',
+          '.github',
+          '.husky',
+          '.eslintrc',
+          '.prettierrc',
+          'setup-',
+          '.test.ts',
+          '.test.tsx',
+          '.spec.ts',
+          '.spec.tsx',
+        ];
+        return !excludePatterns.some((pattern) => f.includes(pattern));
+      });
 
     if (changedFiles.length === 0) {
-      log('green', '✓ No TypeScript/JavaScript changes to review');
+      log('green', '✓ No application code changes to review (only automation/config files changed)');
       return { success: true, review: null };
     }
 
-    log('blue', `\nAnalyzing ${changedFiles.length} files...\n`);
+    log('blue', `\nAnalyzing ${changedFiles.length} application file(s)...\n`);
 
     const analyzer = new CodeReviewAnalyzer();
 
@@ -423,11 +441,23 @@ async function performDetailedCodeReview() {
       }
     });
 
-    // Get diff stats
+    // Get diff stats (only for application files, not automation/config)
     try {
+      const excludePatterns = [
+        'scripts/detailed-code-review.js',
+        'scripts/code-review.js',
+        '.github/workflows/code-review.yml',
+        '.github',
+        '.husky',
+        '.eslintrc',
+        '.prettierrc',
+        'setup-',
+      ];
+      
       const stats = runCommand('git diff origin/main --numstat', true)
         .split('\n')
-        .filter((line) => line && /\.tsx?$|\.jsx?$/.test(line));
+        .filter((line) => line && /\.tsx?$|\.jsx?$/.test(line))
+        .filter((line) => !excludePatterns.some((pattern) => line.includes(pattern)));
 
       stats.forEach((stat) => {
         const [added, deleted] = stat.split('\t').slice(0, 2);
