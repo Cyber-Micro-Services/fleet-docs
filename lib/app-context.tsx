@@ -245,6 +245,9 @@ function mapApiDocumentToLocal(
       `/public/uploads/documents/${apiDocument.fileName ?? ""}`,
     uploadedAt: apiDocument.createdAt.split("T")[0],
     status: calculateDocumentStatus(apiDocument.expiryDate),
+    ocrStatus: apiDocument.ocrStatus,
+    ocrText: apiDocument.ocrText,
+    ocrExtractedData: apiDocument.ocrExtractedData,
   };
 }
 
