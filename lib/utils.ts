@@ -18,17 +18,23 @@ export async function downloadFile(
     let blob: Blob;
     let normalizedFileUrl = fileUrl;
 
-    if (fileUrl.startsWith("/public/uploads/")) {
-      normalizedFileUrl = `/api${fileUrl}`;
+    const normalizeUploadPath = (pathname: string): string | null => {
+      const stripped = pathname.replace(/^\/(?:public|misc)\/uploads\//, "");
+      if (stripped !== pathname) return `/api/public/uploads/${stripped}`;
+      return null;
+    };
+
+    const localNormalized = normalizeUploadPath(fileUrl);
+    if (localNormalized) {
+      normalizedFileUrl = localNormalized;
     } else if (
       fileUrl.startsWith("http://") ||
       fileUrl.startsWith("https://")
     ) {
       try {
         const parsedUrl = new URL(fileUrl);
-        if (parsedUrl.pathname.startsWith("/public/uploads/")) {
-          normalizedFileUrl = `/api${parsedUrl.pathname}`;
-        }
+        const remoteNormalized = normalizeUploadPath(parsedUrl.pathname);
+        if (remoteNormalized) normalizedFileUrl = remoteNormalized;
       } catch {
         normalizedFileUrl = fileUrl;
       }

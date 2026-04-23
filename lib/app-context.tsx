@@ -229,6 +229,261 @@ function parseDocumentType(type: string): Document["type"] {
     : "Alte Documente";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeDate(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const isoMatch = trimmed.match(/^(\d{4})[-/.](\d{2})[-/.](\d{2})$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const dmyMatch = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, "0");
+    const month = dmyMatch[2].padStart(2, "0");
+    const year = dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = Date.parse(trimmed);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString().split("T")[0];
+  }
+
+  return undefined;
+}
+
+function toDisplayValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function extractKeyValuePairsFromText(
+  text: string,
+): Array<{ key: string; value: string }> {
+  const pairs: Array<{ key: string; value: string }> = [];
+  const lines = text.split(/\r?\n/).map((line) => line.trim());
+  let pendingKey: string | null = null;
+  let pendingValueParts: string[] = [];
+
+  const flushPendingPair = () => {
+    if (!pendingKey) return;
+    const mergedValue = pendingValueParts.join(" ").trim();
+    if (mergedValue) {
+      pairs.push({ key: pendingKey, value: mergedValue });
+    }
+    pendingKey = null;
+    pendingValueParts = [];
+  };
+
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+
+    const inlinePairMatch = line.match(/^([^:]{2,}):{1,2}\s*(.+)$/);
+    if (inlinePairMatch) {
+      flushPendingPair();
+      const key = inlinePairMatch[1].trim();
+      const value = inlinePairMatch[2].trim();
+      if (key && value) {
+        pairs.push({ key, value });
+      }
+      continue;
+    }
+
+    const keyOnlyMatch = line.match(/^([^:]{2,}):{1,2}\s*$/);
+    if (keyOnlyMatch) {
+      flushPendingPair();
+      const key = keyOnlyMatch[1].trim();
+      if (key) {
+        pendingKey = key;
+      }
+      continue;
+    }
+
+    if (pendingKey) {
+      pendingValueParts.push(line);
+    }
+  }
+
+  flushPendingPair();
+
+  return pairs;
+}
+
+function mergeKeyValuePairs(
+  ...pairGroups: Array<
+    Array<{ key: string; value: string; confidence?: number }>
+  >
+): Array<{ key: string; value: string; confidence?: number }> {
+  const merged: Array<{ key: string; value: string; confidence?: number }> = [];
+  const seen = new Set<string>();
+
+  for (const group of pairGroups) {
+    for (const pair of group) {
+      const key = pair.key.trim();
+      const value = pair.value.trim();
+      if (!key || !value) continue;
+
+      const fingerprint = `${key.toLowerCase()}::${value.toLowerCase()}`;
+      if (seen.has(fingerprint)) continue;
+
+      seen.add(fingerprint);
+      merged.push({
+        key,
+        value,
+        ...(typeof pair.confidence === "number"
+          ? { confidence: pair.confidence }
+          : {}),
+      });
+    }
+  }
+
+  return merged;
+}
+
+function mapOcrPayloadToDocumentPatch(
+  payload: unknown,
+): Partial<DocumentUploadResponse> {
+  if (!isRecord(payload)) {
+    return {};
+  }
+
+  const extractedInfo = isRecord(payload.extractedInfo)
+    ? payload.extractedInfo
+    : {};
+
+  const keyValuePairsRaw = Array.isArray(payload.keyValuePairs)
+    ? payload.keyValuePairs
+    : isRecord(payload.ocrExtractedData) &&
+        Array.isArray(payload.ocrExtractedData.keyValuePairs)
+      ? payload.ocrExtractedData.keyValuePairs
+      : [];
+
+  const keyValuePairs = keyValuePairsRaw
+    .filter(
+      (entry): entry is { key: string; value: string; confidence?: number } => {
+        return (
+          isRecord(entry) &&
+          typeof entry.key === "string" &&
+          typeof entry.value === "string"
+        );
+      },
+    )
+    .map((entry) => ({
+      key: entry.key,
+      value: entry.value,
+      ...(typeof entry.confidence === "number"
+        ? { confidence: entry.confidence }
+        : {}),
+    }));
+
+  const extractedFieldsPairs = Array.isArray(payload.extractedFields)
+    ? payload.extractedFields
+        .filter(
+          (
+            entry,
+          ): entry is { name: string; value: string; confidence?: number } => {
+            return (
+              isRecord(entry) &&
+              typeof entry.name === "string" &&
+              typeof entry.value === "string"
+            );
+          },
+        )
+        .map((entry) => ({
+          key: entry.name,
+          value: entry.value,
+          ...(typeof entry.confidence === "number"
+            ? { confidence: entry.confidence }
+            : {}),
+        }))
+    : [];
+
+  const extractedInfoPairs = Object.entries(extractedInfo)
+    .map(([key, value]) => {
+      const displayValue = toDisplayValue(value);
+      if (!displayValue) return null;
+      return { key, value: displayValue };
+    })
+    .filter((entry): entry is { key: string; value: string } => entry !== null);
+
+  const textPairs =
+    typeof payload.text === "string"
+      ? extractKeyValuePairsFromText(payload.text)
+      : [];
+
+  const allPairs = mergeKeyValuePairs(
+    keyValuePairs,
+    extractedFieldsPairs,
+    extractedInfoPairs,
+    textPairs,
+  );
+
+  const hasPairs = allPairs.length > 0;
+
+  const title =
+    (typeof payload.title === "string" && payload.title.trim()) ||
+    (typeof extractedInfo.policyNumber === "string" &&
+      extractedInfo.policyNumber.trim()) ||
+    (typeof extractedInfo.documentNumber === "string" &&
+      extractedInfo.documentNumber.trim()) ||
+    undefined;
+
+  const issueDate =
+    normalizeDate(payload.issueDate) ?? normalizeDate(extractedInfo.issueDate);
+  const expiryDate =
+    normalizeDate(payload.expiryDate) ??
+    normalizeDate(extractedInfo.expiryDate);
+
+  const ocrText = typeof payload.text === "string" ? payload.text : undefined;
+  const extractedInfoHasValues = Object.values(extractedInfo).some((value) =>
+    typeof value === "string" ? value.trim().length > 0 : value != null,
+  );
+
+  const explicitStatus =
+    (typeof payload.ocrStatus === "string" && payload.ocrStatus) ||
+    (typeof payload.status === "string" && payload.status) ||
+    undefined;
+
+  const hasUsefulData =
+    hasPairs ||
+    Boolean(title || issueDate || expiryDate || ocrText) ||
+    extractedInfoHasValues;
+
+  let normalizedStatus: string;
+  if (explicitStatus) {
+    normalizedStatus = explicitStatus.toUpperCase();
+    if (normalizedStatus === "FAILED" && hasUsefulData) {
+      normalizedStatus = "COMPLETED";
+    }
+  } else {
+    normalizedStatus = hasUsefulData ? "COMPLETED" : "PENDING";
+  }
+
+  return {
+    ...(title ? { title } : {}),
+    ...(issueDate ? { issueDate } : {}),
+    ...(expiryDate ? { expiryDate } : {}),
+    ...(ocrText ? { ocrText } : {}),
+    ...(hasPairs ? { ocrExtractedData: { keyValuePairs: allPairs } } : {}),
+    ocrStatus: normalizedStatus,
+  };
+}
+
 function mapApiDocumentToLocal(
   apiDocument: DocumentUploadResponse,
   trailerId: string,
@@ -240,9 +495,15 @@ function mapApiDocumentToLocal(
     number: apiDocument.title,
     issueDate: apiDocument.issueDate,
     expiryDate: apiDocument.expiryDate,
-    fileUrl:
-      apiDocument.filePath ??
-      `/public/uploads/documents/${apiDocument.fileName ?? ""}`,
+    fileUrl: (() => {
+      const raw =
+        apiDocument.filePath ??
+        (apiDocument.fileName
+          ? `/public/uploads/documents/${apiDocument.fileName}`
+          : "");
+      // Normalize misc/uploads → public/uploads so the FE proxy route handles it consistently
+      return raw.replace(/^\/misc\/uploads\//, "/public/uploads/");
+    })(),
     uploadedAt: apiDocument.createdAt.split("T")[0],
     status: calculateDocumentStatus(apiDocument.expiryDate),
     ocrStatus: apiDocument.ocrStatus,
@@ -611,6 +872,117 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [authFetch],
   );
 
+  const getDocumentOcrPatch = useCallback(
+    async (
+      documentId: string,
+    ): Promise<Partial<DocumentUploadResponse> | null> => {
+      let response: Response;
+
+      try {
+        response = await authFetch(`/api/documents/${documentId}/ocr`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+      } catch {
+        return null;
+      }
+
+      if (!response.ok) {
+        return null;
+      }
+
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      return mapOcrPayloadToDocumentPatch(payload);
+    },
+    [authFetch],
+  );
+
+  const enrichDocumentsWithOcr = useCallback(
+    async (
+      apiDocuments: DocumentUploadResponse[],
+    ): Promise<DocumentUploadResponse[]> => {
+      const enriched = await Promise.all(
+        apiDocuments.map(async (doc) => {
+          if (!UUID_REGEX.test(doc.id)) {
+            return doc;
+          }
+
+          const alreadyCompleted =
+            doc.ocrStatus === "COMPLETED" &&
+            Boolean(doc.ocrExtractedData?.keyValuePairs?.length);
+          if (alreadyCompleted) {
+            return doc;
+          }
+
+          const ocrPatch = await getDocumentOcrPatch(doc.id);
+          if (!ocrPatch) {
+            const textDerivedPairs =
+              typeof doc.ocrText === "string"
+                ? extractKeyValuePairsFromText(doc.ocrText)
+                : [];
+
+            const fallbackPairs = mergeKeyValuePairs(
+              doc.ocrExtractedData?.keyValuePairs ?? [],
+              textDerivedPairs,
+            );
+
+            if (fallbackPairs.length === 0) {
+              return doc;
+            }
+
+            return {
+              ...doc,
+              ocrStatus:
+                doc.ocrStatus === "FAILED" ? "COMPLETED" : doc.ocrStatus,
+              ocrExtractedData: { keyValuePairs: fallbackPairs },
+            };
+          }
+
+          const docTextPairs =
+            typeof doc.ocrText === "string"
+              ? extractKeyValuePairsFromText(doc.ocrText)
+              : [];
+          const patchTextPairs =
+            typeof ocrPatch.ocrText === "string"
+              ? extractKeyValuePairsFromText(ocrPatch.ocrText)
+              : [];
+
+          const mergedPairs = mergeKeyValuePairs(
+            doc.ocrExtractedData?.keyValuePairs ?? [],
+            ocrPatch.ocrExtractedData?.keyValuePairs ?? [],
+            docTextPairs,
+            patchTextPairs,
+          );
+
+          const mergedOcrExtractedData =
+            mergedPairs.length > 0 ? { keyValuePairs: mergedPairs } : undefined;
+
+          return {
+            ...doc,
+            ...ocrPatch,
+            title: ocrPatch.title ?? doc.title,
+            issueDate: ocrPatch.issueDate ?? doc.issueDate,
+            expiryDate: ocrPatch.expiryDate ?? doc.expiryDate,
+            ocrStatus: ocrPatch.ocrStatus ?? doc.ocrStatus,
+            ocrText: ocrPatch.ocrText ?? doc.ocrText,
+            ocrExtractedData: mergedOcrExtractedData,
+          };
+        }),
+      );
+
+      return enriched;
+    },
+    [getDocumentOcrPatch],
+  );
+
   const refreshTrailerDocuments = useCallback(
     async (trailerId: string): Promise<void> => {
       if (!UUID_REGEX.test(trailerId)) {
@@ -618,7 +990,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const apiDocuments = await getVehicleDocuments(trailerId);
-      const mappedDocuments = apiDocuments.map((doc) =>
+      const enrichedApiDocuments = await enrichDocumentsWithOcr(apiDocuments);
+      const mappedDocuments = enrichedApiDocuments.map((doc) =>
         mapApiDocumentToLocal(doc, trailerId),
       );
 
@@ -637,7 +1010,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }),
       );
     },
-    [getVehicleDocuments],
+    [enrichDocumentsWithOcr, getVehicleDocuments],
   );
 
   const refreshTrailers = useCallback(async (): Promise<void> => {
@@ -656,7 +1029,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           try {
             const apiDocuments = await getVehicleDocuments(trailer.id);
-            const mappedDocuments = apiDocuments.map((doc) =>
+            const enrichedApiDocuments =
+              await enrichDocumentsWithOcr(apiDocuments);
+            const mappedDocuments = enrichedApiDocuments.map((doc) =>
               mapApiDocumentToLocal(doc, trailer.id!),
             );
 
@@ -682,7 +1057,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setTrailersLoading(false);
     }
-  }, [getVehicleDocuments, getVehicles]);
+  }, [enrichDocumentsWithOcr, getVehicleDocuments, getVehicles]);
 
   useEffect(() => {
     if (!isAuthenticated) {

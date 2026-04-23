@@ -15,13 +15,24 @@ export async function GET(
     const { path } = await params;
     const filePath = path.join("/");
 
-    const backendResponse = await fetch(
+    let backendResponse = await fetch(
       `${BACKEND_BASE_URL}/public/uploads/${filePath}`,
       {
         method: "GET",
         cache: "no-store",
       },
     );
+
+    // Fallback to misc/uploads if backend has migrated the storage folder
+    if (backendResponse.status === 404) {
+      const miscResponse = await fetch(
+        `${BACKEND_BASE_URL}/misc/uploads/${filePath}`,
+        { method: "GET", cache: "no-store" },
+      );
+      if (miscResponse.ok) {
+        backendResponse = miscResponse;
+      }
+    }
 
     if (!backendResponse.ok) {
       return NextResponse.json(
