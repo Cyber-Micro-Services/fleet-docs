@@ -350,13 +350,6 @@ export default function LoginPage() {
             </button>
           </form>
         </div>
-
-        {/* Testing Info */}
-        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 text-center">
-          <p className="text-sm text-gray-700">
-            For testing purposes you can use email: admin, password: admin
-          </p>
-        </div>
       </div>
     </div>
   );
