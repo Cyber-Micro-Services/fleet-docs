@@ -180,6 +180,42 @@ export default function DocumentCard({
                 {formatDate(document.uploadedAt)}
               </span>
             </div>
+            {document.ocrStatus && (
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Status OCR:</span>
+                <span
+                  className={`text-xs font-medium px-2 py-0.5 rounded ${
+                    document.ocrStatus === "COMPLETED"
+                      ? "bg-green-100 text-green-700"
+                      : document.ocrStatus === "FAILED"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-yellow-100 text-yellow-700"
+                  }`}
+                >
+                  {document.ocrStatus}
+                </span>
+              </div>
+            )}
+            {document.ocrExtractedData?.keyValuePairs &&
+              document.ocrExtractedData.keyValuePairs.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-gray-600 mb-1 font-medium">
+                    Date extrase OCR:
+                  </p>
+                  <div className="bg-gray-50 rounded p-2 space-y-1">
+                    {document.ocrExtractedData.keyValuePairs.map((pair, i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <span className="text-gray-500 text-xs capitalize">
+                          {pair.key}:
+                        </span>
+                        <span className="text-gray-800 text-xs text-right">
+                          {pair.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
           </div>
         </div>
       )}

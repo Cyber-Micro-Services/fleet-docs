@@ -48,6 +48,7 @@ interface UploadedFile {
   data: DocumentForm;
   processing: boolean;
   error?: string;
+  ocrWarning?: string;
 }
 
 interface BulkUploadModalProps {
@@ -55,61 +56,309 @@ interface BulkUploadModalProps {
   onClose: () => void;
 }
 
-// Mock OCR function to simulate document analysis
-const mockOCRProcess = async (fileName: string): Promise<DocumentForm> => {
-  // Simulate processing delay
-  await new Promise((resolve) =>
-    setTimeout(resolve, 800 + Math.random() * 800),
-  );
+type OcrPreviewResult = Partial<DocumentForm>;
 
-  // Mock OCR extraction based on file name patterns
-  const typePatterns: Record<string, DocumentType> = {
-    itp: "ITP",
-    rca: "RCA",
-    revizie: "Revizie Tehnica",
-    carnet: "Carnet Prometeu",
-    echilibru: "Certificat Echilibru",
-  };
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
 
-  let detectedType: DocumentType = "Alte Documente";
-  for (const [pattern, type] of Object.entries(typePatterns)) {
-    if (fileName.toLowerCase().includes(pattern)) {
-      detectedType = type;
-      break;
+function normalizeDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const isoMatch = trimmed.match(/^(\d{4})[-/.](\d{2})[-/.](\d{2})$/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const dmyMatch = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, "0");
+    const month = dmyMatch[2].padStart(2, "0");
+    const year = dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = Date.parse(trimmed);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString().split("T")[0];
+  }
+
+  return undefined;
+}
+
+function toConfidence(confidence: unknown): DocumentForm["ocrConfidence"] {
+  if (typeof confidence !== "number") return undefined;
+  const value = confidence > 1 ? confidence / 100 : confidence;
+  if (value >= 0.8) return "high";
+  if (value >= 0.55) return "medium";
+  return "low";
+}
+
+function detectDocumentType(rawValue?: string): DocumentType {
+  if (!rawValue) return "Alte Documente";
+  const normalized = normalizeText(rawValue);
+
+  const patterns: Array<{ pattern: RegExp; type: DocumentType }> = [
+    { pattern: /\bitp\b|inspectie tehnica/, type: "ITP" },
+    { pattern: /\brca\b|asigurare auto/, type: "RCA" },
+    { pattern: /revizie/, type: "Revizie Tehnica" },
+    { pattern: /carnet/, type: "Carnet Prometeu" },
+    { pattern: /echilibru/, type: "Certificat Echilibru" },
+    { pattern: /marfa/, type: "Asigurare Marfa" },
+    { pattern: /geumatic/, type: "Certificat Geumatic" },
+  ];
+
+  for (const { pattern, type } of patterns) {
+    if (pattern.test(normalized)) return type;
+  }
+
+  return "Alte Documente";
+}
+
+function getStringField(
+  source: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function getNestedObject(
+  source: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = source[key];
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function mapExtractedFields(
+  payload: Record<string, unknown>,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  const extractedFields = payload.extractedFields;
+
+  if (!Array.isArray(extractedFields)) {
+    return result;
+  }
+
+  for (const field of extractedFields) {
+    if (!field || typeof field !== "object") continue;
+    const name = (field as { name?: unknown }).name;
+    const value = (field as { value?: unknown }).value;
+    if (typeof name !== "string" || typeof value !== "string") continue;
+    const normalizedName = normalizeText(name);
+    if (normalizedName && value.trim()) {
+      result.set(normalizedName, value.trim());
     }
   }
 
-  const issueDate = new Date(
-    2023,
-    Math.floor(Math.random() * 12),
-    Math.floor(Math.random() * 28) + 1,
-  )
-    .toISOString()
-    .split("T")[0];
-  const expiryDate = new Date(
-    2026,
-    Math.floor(Math.random() * 12),
-    Math.floor(Math.random() * 28) + 1,
-  )
-    .toISOString()
-    .split("T")[0];
+  return result;
+}
+
+function getKeyValuePairs(payload: Record<string, unknown>) {
+  const rootPairs = payload.keyValuePairs;
+  if (Array.isArray(rootPairs)) return rootPairs;
+
+  const extracted = payload.ocrExtractedData;
+  if (
+    extracted &&
+    typeof extracted === "object" &&
+    Array.isArray((extracted as { keyValuePairs?: unknown[] }).keyValuePairs)
+  ) {
+    return (extracted as { keyValuePairs: unknown[] }).keyValuePairs;
+  }
+
+  return [] as unknown[];
+}
+
+function mapKeyValues(payload: Record<string, unknown>): Map<string, string> {
+  const result = new Map<string, string>();
+  const pairs = getKeyValuePairs(payload);
+
+  for (const pair of pairs) {
+    if (!pair || typeof pair !== "object") continue;
+    const key = (pair as { key?: unknown }).key;
+    const value = (pair as { value?: unknown }).value;
+    if (typeof key !== "string" || typeof value !== "string") continue;
+    const normalizedKey = normalizeText(key);
+    if (normalizedKey && value.trim()) {
+      result.set(normalizedKey, value.trim());
+    }
+  }
+
+  return result;
+}
+
+function getMappedValue(
+  keyValueMap: Map<string, string>,
+  candidates: string[],
+): string | undefined {
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeText(candidate);
+    if (keyValueMap.has(normalizedCandidate)) {
+      return keyValueMap.get(normalizedCandidate);
+    }
+  }
+
+  for (const [key, value] of keyValueMap.entries()) {
+    if (
+      candidates.some((candidate) => key.includes(normalizeText(candidate)))
+    ) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+async function runOcrPreview(
+  file: File,
+  authFetch: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>,
+): Promise<OcrPreviewResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await authFetch("/api/documents/ocr", {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    throw new Error("Nu ma pot conecta la serviciul OCR.");
+  }
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const apiMessage =
+      payload &&
+      typeof payload === "object" &&
+      typeof (payload as { message?: unknown }).message === "string"
+        ? (payload as { message: string }).message
+        : "OCR-ul nu a putut analiza documentul.";
+    throw new Error(apiMessage);
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+
+  const source = payload as Record<string, unknown>;
+  const keyValueMap = mapKeyValues(source);
+  const extractedFieldMap = mapExtractedFields(source);
+  const extractedInfo = getNestedObject(source, "extractedInfo") ?? {};
+
+  const title =
+    getStringField(source, [
+      "title",
+      "documentTitle",
+      "number",
+      "documentNumber",
+    ]) ??
+    getStringField(extractedInfo, [
+      "policyNumber",
+      "documentNumber",
+      "number",
+      "serialNumber",
+    ]) ??
+    getMappedValue(extractedFieldMap, [
+      "policynumber",
+      "documentnumber",
+      "number",
+    ]) ??
+    getMappedValue(keyValueMap, [
+      "titlu",
+      "title",
+      "numar document",
+      "nr document",
+      "numar",
+      "document number",
+      "serie",
+    ]);
+
+  const issueDate =
+    normalizeDate(
+      getStringField(source, ["issueDate", "issuedAt", "dateOfIssue"]),
+    ) ??
+    normalizeDate(getStringField(extractedInfo, ["issueDate", "issuedAt"])) ??
+    normalizeDate(
+      getMappedValue(keyValueMap, [
+        "data emiterii",
+        "data emitere",
+        "issue date",
+        "date of issue",
+        "emis la",
+      ]),
+    );
+
+  const expiryDate =
+    normalizeDate(
+      getStringField(source, ["expiryDate", "expirationDate", "validUntil"]),
+    ) ??
+    normalizeDate(
+      getStringField(extractedInfo, ["expiryDate", "expirationDate"]),
+    ) ??
+    normalizeDate(
+      getMappedValue(keyValueMap, [
+        "data expirarii",
+        "data expirare",
+        "expiry date",
+        "expiration date",
+        "valid until",
+        "valabil pana",
+      ]),
+    );
+
+  const rawType =
+    getStringField(source, ["type", "documentType", "category"]) ??
+    getStringField(extractedInfo, ["documentType", "type"]) ??
+    getMappedValue(keyValueMap, ["tip document", "document type", "tip"]);
+
+  const rawText = getStringField(source, ["text"]);
+
+  const confidence =
+    toConfidence(source.confidence) ??
+    toConfidence(source.ocrConfidence) ??
+    toConfidence(source.averageConfidence);
 
   return {
-    type: detectedType,
-    number: `RO-2024-${Math.floor(Math.random() * 999999)
-      .toString()
-      .padStart(6, "0")}`,
-    issueDate,
-    expiryDate,
-    ocrConfidence: Math.random() > 0.3 ? "high" : "medium",
+    type: detectDocumentType(rawType ?? rawText ?? file.name),
+    number: title ?? "",
+    issueDate: issueDate ?? "",
+    expiryDate: expiryDate ?? "",
+    ocrConfidence: confidence,
   };
-};
+}
 
 export default function BulkUploadModal({
   trailerId,
   onClose,
 }: BulkUploadModalProps) {
-  const { addDocument, uploadDocument, refreshTrailerDocuments } = useApp();
+  const { addDocument, uploadDocument, refreshTrailerDocuments, authFetch } =
+    useApp();
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -130,20 +379,14 @@ export default function BulkUploadModal({
     setIsProcessing(true);
 
     const newFiles: UploadedFile[] = [];
-    const today = new Date().toISOString().split("T")[0];
-    const nextYear = new Date(
-      new Date().setFullYear(new Date().getFullYear() + 1),
-    )
-      .toISOString()
-      .split("T")[0];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const defaultData: DocumentForm = {
         type: "Alte Documente",
         number: "",
-        issueDate: today,
-        expiryDate: nextYear,
+        issueDate: "",
+        expiryDate: "",
       };
 
       if (!ALLOWED_MIME_TYPES.includes(file.type)) {
@@ -182,19 +425,27 @@ export default function BulkUploadModal({
     for (let i = 0; i < newFiles.length; i++) {
       if (newFiles[i].error || !newFiles[i].processing) continue;
       try {
-        const ocrData = await mockOCRProcess(newFiles[i].name);
+        const ocrData = await runOcrPreview(newFiles[i].file, authFetch);
         setUploadedFiles((prev) => {
           const updated = [...prev];
-          updated[i] = { ...updated[i], data: ocrData, processing: false };
+          updated[i] = {
+            ...updated[i],
+            data: { ...updated[i].data, ...ocrData },
+            processing: false,
+            ocrWarning: undefined,
+          };
           return updated;
         });
-      } catch {
+      } catch (err) {
         setUploadedFiles((prev) => {
           const updated = [...prev];
           updated[i] = {
             ...updated[i],
             processing: false,
-            error: "Eroare în procesare OCR",
+            ocrWarning:
+              err instanceof Error
+                ? err.message
+                : "OCR preview indisponibil. Completeaza manual campurile.",
           };
           return updated;
         });
@@ -433,6 +684,12 @@ export default function BulkUploadModal({
                     </div>
                   )}
 
+                  {!file.error && file.ocrWarning && (
+                    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm">
+                      {file.ocrWarning}
+                    </div>
+                  )}
+
                   {/* Document Fields */}
                   {!file.processing && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -569,7 +826,7 @@ export default function BulkUploadModal({
                 {isSubmitting ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Se procesează...
+                    Se analizează documentul...
                   </>
                 ) : (
                   <>

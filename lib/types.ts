@@ -18,6 +18,16 @@ export type VehicleType =
   | "CAMION"
   | "CAP_CAMION";
 
+export interface OcrKeyValuePair {
+  key: string;
+  value: string;
+  confidence?: number;
+}
+
+export interface OcrExtractedData {
+  keyValuePairs?: OcrKeyValuePair[];
+}
+
 export interface Document {
   id: string;
   trailerId: string;
@@ -28,6 +38,9 @@ export interface Document {
   fileUrl: string;
   uploadedAt: string;
   status: AlertStatus;
+  ocrStatus?: "COMPLETED" | "FAILED" | "PENDING" | string;
+  ocrText?: string;
+  ocrExtractedData?: OcrExtractedData;
 }
 
 export interface Trailer {
@@ -71,6 +84,8 @@ export interface DocumentUploadResponse {
   mimeType?: string;
   fileSize?: number;
   ocrStatus?: string;
+  ocrText?: string;
+  ocrExtractedData?: OcrExtractedData;
   createdAt: string;
   updatedAt?: string;
 }

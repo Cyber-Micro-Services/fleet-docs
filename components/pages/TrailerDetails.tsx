@@ -18,7 +18,7 @@ import DocumentCard from "@/components/DocumentCard";
 import BulkUploadModal from "@/components/BulkUploadModal";
 import NotificationCenter from "@/components/NotificationCenter";
 import { downloadMultipleFiles } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const statusConfig: Record<
   AlertStatus,
@@ -58,7 +58,7 @@ export default function TrailerDetails({
   trailerId: string;
   onBack: () => void;
 }) {
-  const { getTrailerById, deleteDocument } = useApp();
+  const { getTrailerById, deleteDocument, refreshTrailerDocuments } = useApp();
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [isDeletingDocument, setIsDeletingDocument] = useState(false);
@@ -66,6 +66,33 @@ export default function TrailerDetails({
     null,
   );
   const trailer = getTrailerById(trailerId);
+
+  useEffect(() => {
+    if (!trailer) {
+      return;
+    }
+
+    const hasUnresolvedOcr = trailer.documents.some(
+      (document) =>
+        (typeof document.ocrStatus === "string" &&
+          document.ocrStatus.toUpperCase() === "PENDING") ||
+        (typeof document.ocrStatus === "string" &&
+          document.ocrStatus.toUpperCase() === "FAILED" &&
+          (document.ocrExtractedData?.keyValuePairs ?? []).length === 0),
+    );
+
+    if (!hasUnresolvedOcr) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshTrailerDocuments(trailerId);
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshTrailerDocuments, trailer, trailerId]);
 
   if (!trailer) {
     return (
