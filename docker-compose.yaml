@@ -8,5 +8,5 @@ services:
       dockerfile: Dockerfile
     ports:
       - '9000:3000'
-    env:
+    environment:
       - AUTH_API_BASE_URL='https://fleet-docs.cybermicroservices.com/api'
