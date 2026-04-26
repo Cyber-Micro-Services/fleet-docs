@@ -1,6 +1,6 @@
 # Used for production
 
-FROM node:18.20-alpine3.20 as node
+FROM node:20.19-alpine3.23 as node
 
 WORKDIR /usr/src/app
 
