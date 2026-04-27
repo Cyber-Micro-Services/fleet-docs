@@ -1,0 +1,26 @@
+# Used for development with hot reload support
+
+services:
+  fe-dev:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: fleet-docs-dev
+    ports:
+      - '10000:3000'
+    volumes:
+      # Mount source code for hot reload
+      - .:/usr/src/app
+      # Prevent node_modules from being overwritten
+      - /usr/src/app/node_modules
+      - /usr/src/app/.next
+    environment:
+      - NODE_ENV=development
+      - AUTH_API_BASE_URL=http://localhost:10001/api
+    networks:
+      - fleet-network
+
+networks:
+  fleet-network:
+    driver: bridge

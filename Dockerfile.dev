@@ -1,0 +1,13 @@
+# Used for development
+
+FROM node:20.19-alpine3.23
+
+WORKDIR /usr/src/app
+
+COPY package.json .
+
+COPY package-lock.json .
+
+RUN npm ci
+
+CMD ["npm", "run", "dev"]
