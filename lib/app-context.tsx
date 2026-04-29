@@ -1,13 +1,6 @@
-"use client";
+'use client';
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import {
   Trailer,
   Document,
@@ -20,8 +13,8 @@ import {
   VehicleResponse,
   VehicleType,
   DocumentUploadResponse,
-} from "./types";
-import { calculateDocumentStatus, calculateUrgencyScore } from "./mock-data";
+} from './types';
+import { calculateDocumentStatus, calculateUrgencyScore } from './mock-data';
 
 interface AppContextType {
   isAuthenticated: boolean;
@@ -32,10 +25,7 @@ interface AppContextType {
   register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
   getAuthHeaders: () => HeadersInit;
-  authFetch: (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ) => Promise<Response>;
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   trailers: Trailer[];
   trailersLoading: boolean;
   trailersError: string | null;
@@ -48,16 +38,12 @@ interface AppContextType {
       issueDate: string;
       expiryDate: string;
     },
-    vehicleId?: string,
+    vehicleId?: string
   ) => Promise<DocumentUploadResponse>;
   getVehicleDocuments: (vehicleId: string) => Promise<DocumentUploadResponse[]>;
   refreshTrailerDocuments: (trailerId: string) => Promise<void>;
   addDocument: (trailerId: string, document: Document) => void;
-  updateDocument: (
-    trailerId: string,
-    documentId: string,
-    updates: Partial<Document>,
-  ) => void;
+  updateDocument: (trailerId: string, documentId: string, updates: Partial<Document>) => void;
   deleteDocument: (trailerId: string, documentId: string) => Promise<void>;
   getTrailersSorted: () => Trailer[];
   getTrailerById: (id: string) => Trailer | undefined;
@@ -83,43 +69,53 @@ export interface AppNotification {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const API_BASE_URL = "/api/auth";
-const AUTH_TOKEN_KEY = "auth_access_token";
-const AUTH_REFRESH_TOKEN_KEY = "auth_refresh_token";
-const AUTH_USER_KEY = "auth_user";
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RAW_BACKEND_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim() || 'http://localhost:4000';
+const BACKEND_BASE_URL = RAW_BACKEND_BASE_URL.replace(/\/+$/, '');
+const BACKEND_API_BASE_URL = /\/api$/i.test(BACKEND_BASE_URL)
+  ? BACKEND_BASE_URL
+  : `${BACKEND_BASE_URL}/api`;
+const AUTH_TOKEN_KEY = 'auth_access_token';
+const AUTH_REFRESH_TOKEN_KEY = 'auth_refresh_token';
+const AUTH_USER_KEY = 'auth_user';
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface RefreshPayload {
   refreshToken: string;
 }
 
-type AuthEndpoint = "login" | "register" | "refresh" | "logout";
+type AuthEndpoint = 'login' | 'register' | 'refresh' | 'logout';
+
+function toBackendApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  const strippedPath = path.replace(/^\/?api(?=\/)/i, '');
+  const normalizedPath = strippedPath.startsWith('/') ? strippedPath : `/${strippedPath}`;
+
+  return `${BACKEND_API_BASE_URL}${normalizedPath}`;
+}
 
 const VEHICLE_TYPE_LABELS: Record<VehicleType, string> = {
-  SEMIREMORCA_FURGON: "Semiremorca Furgon",
-  SEMIREMORCA_CISTERNA: "Semiremorca Cisterna",
-  SEMIREMORCA_PLATFORMA: "Semiremorca Platforma",
-  REMORCA_PLATFORMA: "Remorca Platforma",
-  CAMION: "Camion",
-  CAP_CAMION: "Cap Camion",
+  SEMIREMORCA_FURGON: 'Semiremorca Furgon',
+  SEMIREMORCA_CISTERNA: 'Semiremorca Cisterna',
+  SEMIREMORCA_PLATFORMA: 'Semiremorca Platforma',
+  REMORCA_PLATFORMA: 'Remorca Platforma',
+  CAMION: 'Camion',
+  CAP_CAMION: 'Cap Camion',
 };
 
-function normalizeErrorMessage(
-  errorPayload: unknown,
-  fallback: string,
-): string {
-  if (!errorPayload || typeof errorPayload !== "object") {
+function normalizeErrorMessage(errorPayload: unknown, fallback: string): string {
+  if (!errorPayload || typeof errorPayload !== 'object') {
     return fallback;
   }
 
-  const maybeMessage = (errorPayload as { message?: string | string[] })
-    .message;
+  const maybeMessage = (errorPayload as { message?: string | string[] }).message;
   if (Array.isArray(maybeMessage)) {
     return maybeMessage[0] ?? fallback;
   }
 
-  if (typeof maybeMessage === "string") {
+  if (typeof maybeMessage === 'string') {
     return maybeMessage;
   }
 
@@ -129,21 +125,21 @@ function normalizeErrorMessage(
 async function requestAuth(
   endpoint: AuthEndpoint,
   body: LoginPayload | RegisterPayload | RefreshPayload,
-  headers?: HeadersInit,
+  headers?: HeadersInit
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/${endpoint}`, {
-      method: "POST",
+    response = await fetch(`${BACKEND_API_BASE_URL}/auth/${endpoint}`, {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         ...(headers ?? {}),
       },
       body: JSON.stringify(body),
     });
   } catch {
     throw new Error(
-      "Nu ma pot conecta la serviciul de autentificare. Verifica daca backend-ul este pornit.",
+      'Nu ma pot conecta la serviciul de autentificare. Verifica daca backend-ul este pornit.'
     );
   }
 
@@ -156,13 +152,13 @@ async function requestAuth(
 
   if (!response.ok) {
     const fallbackMessage =
-      endpoint === "login"
-        ? "Login failed"
-        : endpoint === "register"
-          ? "Registration failed"
-          : endpoint === "refresh"
-            ? "Token refresh failed"
-            : "Logout failed";
+      endpoint === 'login'
+        ? 'Login failed'
+        : endpoint === 'register'
+          ? 'Registration failed'
+          : endpoint === 'refresh'
+            ? 'Token refresh failed'
+            : 'Logout failed';
     throw new Error(normalizeErrorMessage(payload, fallbackMessage));
   }
 
@@ -170,30 +166,30 @@ async function requestAuth(
 }
 
 function isAuthResponse(payload: unknown): payload is AuthResponse {
-  if (!payload || typeof payload !== "object") {
+  if (!payload || typeof payload !== 'object') {
     return false;
   }
 
   const candidate = payload as Partial<AuthResponse>;
   return (
-    typeof candidate.accessToken === "string" &&
-    typeof candidate.refreshToken === "string" &&
-    typeof candidate.user === "object" &&
+    typeof candidate.accessToken === 'string' &&
+    typeof candidate.refreshToken === 'string' &&
+    typeof candidate.user === 'object' &&
     candidate.user !== null
   );
 }
 
 function isVehicleResponse(payload: unknown): payload is VehicleResponse {
-  if (!payload || typeof payload !== "object") {
+  if (!payload || typeof payload !== 'object') {
     return false;
   }
 
   const candidate = payload as Partial<VehicleResponse>;
   return (
-    typeof candidate.series === "string" &&
-    typeof candidate.manufacturer === "string" &&
-    typeof candidate.vehicleType === "string" &&
-    typeof candidate.manufacturedAtUtc === "string"
+    typeof candidate.series === 'string' &&
+    typeof candidate.manufacturer === 'string' &&
+    typeof candidate.vehicleType === 'string' &&
+    typeof candidate.manufacturedAtUtc === 'string'
   );
 }
 
@@ -212,29 +208,29 @@ function mapVehicleToTrailer(vehicle: VehicleResponse): Trailer {
   };
 }
 
-function parseDocumentType(type: string): Document["type"] {
-  const supportedTypes: Document["type"][] = [
-    "ITP",
-    "RCA",
-    "Revizie Tehnica",
-    "Carnet Prometeu",
-    "Certificat Echilibru",
-    "Asigurare Marfa",
-    "Certificat Geumatic",
-    "Alte Documente",
+function parseDocumentType(type: string): Document['type'] {
+  const supportedTypes: Document['type'][] = [
+    'ITP',
+    'RCA',
+    'Revizie Tehnica',
+    'Carnet Prometeu',
+    'Certificat Echilibru',
+    'Asigurare Marfa',
+    'Certificat Geumatic',
+    'Alte Documente',
   ];
 
-  return supportedTypes.includes(type as Document["type"])
-    ? (type as Document["type"])
-    : "Alte Documente";
+  return supportedTypes.includes(type as Document['type'])
+    ? (type as Document['type'])
+    : 'Alte Documente';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function normalizeDate(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+  if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
@@ -245,34 +241,32 @@ function normalizeDate(value: unknown): string | undefined {
 
   const dmyMatch = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
   if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, "0");
-    const month = dmyMatch[2].padStart(2, "0");
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
     const year = dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3];
     return `${year}-${month}-${day}`;
   }
 
   const parsed = Date.parse(trimmed);
   if (!Number.isNaN(parsed)) {
-    return new Date(parsed).toISOString().split("T")[0];
+    return new Date(parsed).toISOString().split('T')[0];
   }
 
   return undefined;
 }
 
 function toDisplayValue(value: unknown): string | undefined {
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed || undefined;
   }
-  if (typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
   return undefined;
 }
 
-function extractKeyValuePairsFromText(
-  text: string,
-): Array<{ key: string; value: string }> {
+function extractKeyValuePairsFromText(text: string): Array<{ key: string; value: string }> {
   const pairs: Array<{ key: string; value: string }> = [];
   const lines = text.split(/\r?\n/).map((line) => line.trim());
   let pendingKey: string | null = null;
@@ -280,7 +274,7 @@ function extractKeyValuePairsFromText(
 
   const flushPendingPair = () => {
     if (!pendingKey) return;
-    const mergedValue = pendingValueParts.join(" ").trim();
+    const mergedValue = pendingValueParts.join(' ').trim();
     if (mergedValue) {
       pairs.push({ key: pendingKey, value: mergedValue });
     }
@@ -325,9 +319,7 @@ function extractKeyValuePairsFromText(
 }
 
 function mergeKeyValuePairs(
-  ...pairGroups: Array<
-    Array<{ key: string; value: string; confidence?: number }>
-  >
+  ...pairGroups: Array<Array<{ key: string; value: string; confidence?: number }>>
 ): Array<{ key: string; value: string; confidence?: number }> {
   const merged: Array<{ key: string; value: string; confidence?: number }> = [];
   const seen = new Set<string>();
@@ -345,9 +337,7 @@ function mergeKeyValuePairs(
       merged.push({
         key,
         value,
-        ...(typeof pair.confidence === "number"
-          ? { confidence: pair.confidence }
-          : {}),
+        ...(typeof pair.confidence === 'number' ? { confidence: pair.confidence } : {}),
       });
     }
   }
@@ -355,61 +345,40 @@ function mergeKeyValuePairs(
   return merged;
 }
 
-function mapOcrPayloadToDocumentPatch(
-  payload: unknown,
-): Partial<DocumentUploadResponse> {
+function mapOcrPayloadToDocumentPatch(payload: unknown): Partial<DocumentUploadResponse> {
   if (!isRecord(payload)) {
     return {};
   }
 
-  const extractedInfo = isRecord(payload.extractedInfo)
-    ? payload.extractedInfo
-    : {};
+  const extractedInfo = isRecord(payload.extractedInfo) ? payload.extractedInfo : {};
 
   const keyValuePairsRaw = Array.isArray(payload.keyValuePairs)
     ? payload.keyValuePairs
-    : isRecord(payload.ocrExtractedData) &&
-        Array.isArray(payload.ocrExtractedData.keyValuePairs)
+    : isRecord(payload.ocrExtractedData) && Array.isArray(payload.ocrExtractedData.keyValuePairs)
       ? payload.ocrExtractedData.keyValuePairs
       : [];
 
   const keyValuePairs = keyValuePairsRaw
-    .filter(
-      (entry): entry is { key: string; value: string; confidence?: number } => {
-        return (
-          isRecord(entry) &&
-          typeof entry.key === "string" &&
-          typeof entry.value === "string"
-        );
-      },
-    )
+    .filter((entry): entry is { key: string; value: string; confidence?: number } => {
+      return isRecord(entry) && typeof entry.key === 'string' && typeof entry.value === 'string';
+    })
     .map((entry) => ({
       key: entry.key,
       value: entry.value,
-      ...(typeof entry.confidence === "number"
-        ? { confidence: entry.confidence }
-        : {}),
+      ...(typeof entry.confidence === 'number' ? { confidence: entry.confidence } : {}),
     }));
 
   const extractedFieldsPairs = Array.isArray(payload.extractedFields)
     ? payload.extractedFields
-        .filter(
-          (
-            entry,
-          ): entry is { name: string; value: string; confidence?: number } => {
-            return (
-              isRecord(entry) &&
-              typeof entry.name === "string" &&
-              typeof entry.value === "string"
-            );
-          },
-        )
+        .filter((entry): entry is { name: string; value: string; confidence?: number } => {
+          return (
+            isRecord(entry) && typeof entry.name === 'string' && typeof entry.value === 'string'
+          );
+        })
         .map((entry) => ({
           key: entry.name,
           value: entry.value,
-          ...(typeof entry.confidence === "number"
-            ? { confidence: entry.confidence }
-            : {}),
+          ...(typeof entry.confidence === 'number' ? { confidence: entry.confidence } : {}),
         }))
     : [];
 
@@ -422,56 +391,47 @@ function mapOcrPayloadToDocumentPatch(
     .filter((entry): entry is { key: string; value: string } => entry !== null);
 
   const textPairs =
-    typeof payload.text === "string"
-      ? extractKeyValuePairsFromText(payload.text)
-      : [];
+    typeof payload.text === 'string' ? extractKeyValuePairsFromText(payload.text) : [];
 
   const allPairs = mergeKeyValuePairs(
     keyValuePairs,
     extractedFieldsPairs,
     extractedInfoPairs,
-    textPairs,
+    textPairs
   );
 
   const hasPairs = allPairs.length > 0;
 
   const title =
-    (typeof payload.title === "string" && payload.title.trim()) ||
-    (typeof extractedInfo.policyNumber === "string" &&
-      extractedInfo.policyNumber.trim()) ||
-    (typeof extractedInfo.documentNumber === "string" &&
-      extractedInfo.documentNumber.trim()) ||
+    (typeof payload.title === 'string' && payload.title.trim()) ||
+    (typeof extractedInfo.policyNumber === 'string' && extractedInfo.policyNumber.trim()) ||
+    (typeof extractedInfo.documentNumber === 'string' && extractedInfo.documentNumber.trim()) ||
     undefined;
 
-  const issueDate =
-    normalizeDate(payload.issueDate) ?? normalizeDate(extractedInfo.issueDate);
-  const expiryDate =
-    normalizeDate(payload.expiryDate) ??
-    normalizeDate(extractedInfo.expiryDate);
+  const issueDate = normalizeDate(payload.issueDate) ?? normalizeDate(extractedInfo.issueDate);
+  const expiryDate = normalizeDate(payload.expiryDate) ?? normalizeDate(extractedInfo.expiryDate);
 
-  const ocrText = typeof payload.text === "string" ? payload.text : undefined;
+  const ocrText = typeof payload.text === 'string' ? payload.text : undefined;
   const extractedInfoHasValues = Object.values(extractedInfo).some((value) =>
-    typeof value === "string" ? value.trim().length > 0 : value != null,
+    typeof value === 'string' ? value.trim().length > 0 : value != null
   );
 
   const explicitStatus =
-    (typeof payload.ocrStatus === "string" && payload.ocrStatus) ||
-    (typeof payload.status === "string" && payload.status) ||
+    (typeof payload.ocrStatus === 'string' && payload.ocrStatus) ||
+    (typeof payload.status === 'string' && payload.status) ||
     undefined;
 
   const hasUsefulData =
-    hasPairs ||
-    Boolean(title || issueDate || expiryDate || ocrText) ||
-    extractedInfoHasValues;
+    hasPairs || Boolean(title || issueDate || expiryDate || ocrText) || extractedInfoHasValues;
 
   let normalizedStatus: string;
   if (explicitStatus) {
     normalizedStatus = explicitStatus.toUpperCase();
-    if (normalizedStatus === "FAILED" && hasUsefulData) {
-      normalizedStatus = "COMPLETED";
+    if (normalizedStatus === 'FAILED' && hasUsefulData) {
+      normalizedStatus = 'COMPLETED';
     }
   } else {
-    normalizedStatus = hasUsefulData ? "COMPLETED" : "PENDING";
+    normalizedStatus = hasUsefulData ? 'COMPLETED' : 'PENDING';
   }
 
   return {
@@ -484,10 +444,7 @@ function mapOcrPayloadToDocumentPatch(
   };
 }
 
-function mapApiDocumentToLocal(
-  apiDocument: DocumentUploadResponse,
-  trailerId: string,
-): Document {
+function mapApiDocumentToLocal(apiDocument: DocumentUploadResponse, trailerId: string): Document {
   return {
     id: apiDocument.id,
     trailerId,
@@ -498,13 +455,11 @@ function mapApiDocumentToLocal(
     fileUrl: (() => {
       const raw =
         apiDocument.filePath ??
-        (apiDocument.fileName
-          ? `/public/uploads/documents/${apiDocument.fileName}`
-          : "");
+        (apiDocument.fileName ? `/public/uploads/documents/${apiDocument.fileName}` : '');
       // Normalize misc/uploads → public/uploads so the FE proxy route handles it consistently
-      return raw.replace(/^\/misc\/uploads\//, "/public/uploads/");
+      return raw.replace(/^\/misc\/uploads\//, '/public/uploads/');
     })(),
-    uploadedAt: apiDocument.createdAt.split("T")[0],
+    uploadedAt: apiDocument.createdAt.split('T')[0],
     status: calculateDocumentStatus(apiDocument.expiryDate),
     ocrStatus: apiDocument.ocrStatus,
     ocrText: apiDocument.ocrText,
@@ -515,16 +470,14 @@ function mapApiDocumentToLocal(
 function removeDocumentFromTrailer(
   trailers: Trailer[],
   trailerId: string,
-  documentId: string,
+  documentId: string
 ): Trailer[] {
   return trailers.map((trailer) => {
     if (trailer.id !== trailerId) {
       return trailer;
     }
 
-    const newDocuments = trailer.documents.filter(
-      (doc) => doc.id !== documentId,
-    );
+    const newDocuments = trailer.documents.filter((doc) => doc.id !== documentId);
     const updatedTrailer = { ...trailer, documents: newDocuments };
     updatedTrailer.urgencyScore = calculateUrgencyScore(newDocuments);
     return updatedTrailer;
@@ -600,12 +553,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const payload = await requestAuth("refresh", {
+      const payload = await requestAuth('refresh', {
         refreshToken: currentRefreshToken,
       });
 
       if (!isAuthResponse(payload)) {
-        throw new Error("Invalid refresh response");
+        throw new Error('Invalid refresh response');
       }
 
       persistSession(payload);
@@ -617,17 +570,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession, persistSession]);
 
   const authFetch = useCallback(
-    async (
-      input: RequestInfo | URL,
-      init: RequestInit = {},
-    ): Promise<Response> => {
+    async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+      const requestInput = typeof input === 'string' ? toBackendApiUrl(input) : input;
       const headers = new Headers(init.headers ?? {});
       const currentAccessToken = accessTokenRef.current;
       if (currentAccessToken) {
-        headers.set("Authorization", `Bearer ${currentAccessToken}`);
+        headers.set('Authorization', `Bearer ${currentAccessToken}`);
       }
 
-      const initialResponse = await fetch(input, {
+      const initialResponse = await fetch(requestInput, {
         ...init,
         headers,
       });
@@ -644,30 +595,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const retryHeaders = new Headers(init.headers ?? {});
       const refreshedAccessToken = accessTokenRef.current;
       if (refreshedAccessToken) {
-        retryHeaders.set("Authorization", `Bearer ${refreshedAccessToken}`);
+        retryHeaders.set('Authorization', `Bearer ${refreshedAccessToken}`);
       }
 
-      return fetch(input, {
+      return fetch(requestInput, {
         ...init,
         headers: retryHeaders,
       });
     },
-    [refreshAuthSession],
+    [refreshAuthSession]
   );
 
   const getVehicles = useCallback(async (): Promise<VehicleResponse[]> => {
     let response: Response;
 
     try {
-      response = await authFetch("/api/vehicles", {
-        method: "GET",
+      response = await authFetch('/vehicles', {
+        method: 'GET',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
       });
     } catch {
       throw new Error(
-        "Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.",
+        'Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.'
       );
     }
 
@@ -680,17 +631,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (!response.ok) {
       if (response.status === 401) {
-        throw new Error(
-          "Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.",
-        );
+        throw new Error('Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.');
       }
 
-      throw new Error(
-        normalizeErrorMessage(
-          responsePayload,
-          "Nu am putut incarca vehiculele.",
-        ),
-      );
+      throw new Error(normalizeErrorMessage(responsePayload, 'Nu am putut incarca vehiculele.'));
     }
 
     if (!Array.isArray(responsePayload)) {
@@ -702,24 +646,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (payload: LoginPayload): Promise<void> => {
-      const responsePayload = await requestAuth("login", payload);
+      const responsePayload = await requestAuth('login', payload);
       if (!isAuthResponse(responsePayload)) {
-        throw new Error("Invalid login response");
+        throw new Error('Invalid login response');
       }
 
       persistSession(responsePayload);
     },
-    [persistSession],
+    [persistSession]
   );
 
   const register = useCallback(
     async (payload: RegisterPayload): Promise<void> => {
-      const responsePayload = await requestAuth("register", payload);
+      const responsePayload = await requestAuth('register', payload);
       if (isAuthResponse(responsePayload)) {
         persistSession(responsePayload);
       }
     },
-    [persistSession],
+    [persistSession]
   );
 
   const logout = useCallback(async () => {
@@ -732,11 +676,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ? { Authorization: `Bearer ${currentAccessToken}` }
           : {};
 
-        await requestAuth(
-          "logout",
-          { refreshToken: currentRefreshToken },
-          authHeaders,
-        );
+        await requestAuth('logout', { refreshToken: currentRefreshToken }, authHeaders);
       } catch {
         // Local cleanup should still happen even if backend logout fails.
       }
@@ -765,27 +705,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         issueDate: string;
         expiryDate: string;
       },
-      vehicleId?: string,
+      vehicleId?: string
     ): Promise<DocumentUploadResponse> => {
       const formData = new FormData();
-      formData.append("file", file);
-      formData.append("title", metadata.title.trim());
-      formData.append("type", metadata.type);
-      formData.append("issueDate", metadata.issueDate);
-      formData.append("expiryDate", metadata.expiryDate);
+      formData.append('file', file);
+      formData.append('title', metadata.title.trim());
+      formData.append('type', metadata.type);
+      formData.append('issueDate', metadata.issueDate);
+      formData.append('expiryDate', metadata.expiryDate);
       if (vehicleId) {
-        formData.append("vehicleId", vehicleId);
+        formData.append('vehicleId', vehicleId);
       }
 
       let response: Response;
       try {
-        response = await authFetch("/api/documents/upload", {
-          method: "POST",
+        response = await authFetch('/documents/upload', {
+          method: 'POST',
           body: formData,
         });
       } catch {
         throw new Error(
-          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+          'Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.'
         );
       }
 
@@ -801,27 +741,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           throw new Error(
             normalizeErrorMessage(
               responsePayload,
-              "Date invalide. Verifica tipul fisierului (PDF/PNG/JPG), dimensiunea maxima 10MB si campurile obligatorii.",
-            ),
+              'Date invalide. Verifica tipul fisierului (PDF/PNG/JPG), dimensiunea maxima 10MB si campurile obligatorii.'
+            )
           );
         }
         if (response.status === 401) {
-          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+          throw new Error('Sesiunea a expirat. Autentifica-te din nou.');
         }
         if (response.status === 404) {
-          throw new Error("Vehiculul nu exista sau nu iti apartine.");
+          throw new Error('Vehiculul nu exista sau nu iti apartine.');
         }
-        throw new Error(
-          normalizeErrorMessage(
-            responsePayload,
-            "Nu am putut incarca documentul.",
-          ),
-        );
+        throw new Error(normalizeErrorMessage(responsePayload, 'Nu am putut incarca documentul.'));
       }
 
       return responsePayload as DocumentUploadResponse;
     },
-    [authFetch],
+    [authFetch]
   );
 
   const getVehicleDocuments = useCallback(
@@ -829,15 +764,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let response: Response;
 
       try {
-        response = await authFetch(`/api/documents/vehicle/${vehicleId}`, {
-          method: "GET",
+        response = await authFetch(`/documents/vehicle/${vehicleId}`, {
+          method: 'GET',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
         });
       } catch {
         throw new Error(
-          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+          'Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.'
         );
       }
 
@@ -850,16 +785,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (!response.ok) {
         if (response.status === 401) {
-          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+          throw new Error('Sesiunea a expirat. Autentifica-te din nou.');
         }
         if (response.status === 404) {
-          throw new Error("Vehiculul nu exista sau nu iti apartine.");
+          throw new Error('Vehiculul nu exista sau nu iti apartine.');
         }
         throw new Error(
           normalizeErrorMessage(
             responsePayload,
-            "Nu am putut incarca lista de documente pentru vehicul.",
-          ),
+            'Nu am putut incarca lista de documente pentru vehicul.'
+          )
         );
       }
 
@@ -869,20 +804,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       return responsePayload as DocumentUploadResponse[];
     },
-    [authFetch],
+    [authFetch]
   );
 
   const getDocumentOcrPatch = useCallback(
-    async (
-      documentId: string,
-    ): Promise<Partial<DocumentUploadResponse> | null> => {
+    async (documentId: string): Promise<Partial<DocumentUploadResponse> | null> => {
       let response: Response;
 
       try {
-        response = await authFetch(`/api/documents/${documentId}/ocr`, {
-          method: "GET",
+        response = await authFetch(`/documents/${documentId}/ocr`, {
+          method: 'GET',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
         });
       } catch {
@@ -902,13 +835,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       return mapOcrPayloadToDocumentPatch(payload);
     },
-    [authFetch],
+    [authFetch]
   );
 
   const enrichDocumentsWithOcr = useCallback(
-    async (
-      apiDocuments: DocumentUploadResponse[],
-    ): Promise<DocumentUploadResponse[]> => {
+    async (apiDocuments: DocumentUploadResponse[]): Promise<DocumentUploadResponse[]> => {
       const enriched = await Promise.all(
         apiDocuments.map(async (doc) => {
           if (!UUID_REGEX.test(doc.id)) {
@@ -916,8 +847,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
 
           const alreadyCompleted =
-            doc.ocrStatus === "COMPLETED" &&
-            Boolean(doc.ocrExtractedData?.keyValuePairs?.length);
+            doc.ocrStatus === 'COMPLETED' && Boolean(doc.ocrExtractedData?.keyValuePairs?.length);
           if (alreadyCompleted) {
             return doc;
           }
@@ -925,13 +855,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const ocrPatch = await getDocumentOcrPatch(doc.id);
           if (!ocrPatch) {
             const textDerivedPairs =
-              typeof doc.ocrText === "string"
-                ? extractKeyValuePairsFromText(doc.ocrText)
-                : [];
+              typeof doc.ocrText === 'string' ? extractKeyValuePairsFromText(doc.ocrText) : [];
 
             const fallbackPairs = mergeKeyValuePairs(
               doc.ocrExtractedData?.keyValuePairs ?? [],
-              textDerivedPairs,
+              textDerivedPairs
             );
 
             if (fallbackPairs.length === 0) {
@@ -940,18 +868,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
             return {
               ...doc,
-              ocrStatus:
-                doc.ocrStatus === "FAILED" ? "COMPLETED" : doc.ocrStatus,
+              ocrStatus: doc.ocrStatus === 'FAILED' ? 'COMPLETED' : doc.ocrStatus,
               ocrExtractedData: { keyValuePairs: fallbackPairs },
             };
           }
 
           const docTextPairs =
-            typeof doc.ocrText === "string"
-              ? extractKeyValuePairsFromText(doc.ocrText)
-              : [];
+            typeof doc.ocrText === 'string' ? extractKeyValuePairsFromText(doc.ocrText) : [];
           const patchTextPairs =
-            typeof ocrPatch.ocrText === "string"
+            typeof ocrPatch.ocrText === 'string'
               ? extractKeyValuePairsFromText(ocrPatch.ocrText)
               : [];
 
@@ -959,7 +884,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             doc.ocrExtractedData?.keyValuePairs ?? [],
             ocrPatch.ocrExtractedData?.keyValuePairs ?? [],
             docTextPairs,
-            patchTextPairs,
+            patchTextPairs
           );
 
           const mergedOcrExtractedData =
@@ -975,12 +900,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ocrText: ocrPatch.ocrText ?? doc.ocrText,
             ocrExtractedData: mergedOcrExtractedData,
           };
-        }),
+        })
       );
 
       return enriched;
     },
-    [getDocumentOcrPatch],
+    [getDocumentOcrPatch]
   );
 
   const refreshTrailerDocuments = useCallback(
@@ -992,7 +917,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const apiDocuments = await getVehicleDocuments(trailerId);
       const enrichedApiDocuments = await enrichDocumentsWithOcr(apiDocuments);
       const mappedDocuments = enrichedApiDocuments.map((doc) =>
-        mapApiDocumentToLocal(doc, trailerId),
+        mapApiDocumentToLocal(doc, trailerId)
       );
 
       setTrailers((prevTrailers) =>
@@ -1007,10 +932,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           };
           updatedTrailer.urgencyScore = calculateUrgencyScore(mappedDocuments);
           return updatedTrailer;
-        }),
+        })
       );
     },
-    [enrichDocumentsWithOcr, getVehicleDocuments],
+    [enrichDocumentsWithOcr, getVehicleDocuments]
   );
 
   const refreshTrailers = useCallback(async (): Promise<void> => {
@@ -1029,10 +954,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           try {
             const apiDocuments = await getVehicleDocuments(trailer.id);
-            const enrichedApiDocuments =
-              await enrichDocumentsWithOcr(apiDocuments);
+            const enrichedApiDocuments = await enrichDocumentsWithOcr(apiDocuments);
             const mappedDocuments = enrichedApiDocuments.map((doc) =>
-              mapApiDocumentToLocal(doc, trailer.id!),
+              mapApiDocumentToLocal(doc, trailer.id!)
             );
 
             return {
@@ -1043,17 +967,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           } catch {
             return trailer;
           }
-        }),
+        })
       );
 
       setTrailers(trailersWithDocuments);
     } catch (error) {
       setTrailers([]);
-      setTrailersError(
-        error instanceof Error
-          ? error.message
-          : "Nu am putut incarca vehiculele.",
-      );
+      setTrailersError(error instanceof Error ? error.message : 'Nu am putut incarca vehiculele.');
     } finally {
       setTrailersLoading(false);
     }
@@ -1074,30 +994,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setNotifications((prevNotifications) => {
       const previousByDocumentId = new Map(
-        prevNotifications.map((notification) => [
-          notification.documentId,
-          notification,
-        ]),
+        prevNotifications.map((notification) => [notification.documentId, notification])
       );
 
       const nextNotifications: AppNotification[] = [];
 
       trailers.forEach((trailer) => {
         trailer.documents.forEach((doc) => {
-          if (
-            doc.status !== "URGENT" &&
-            doc.status !== "EXPIRED" &&
-            doc.status !== "ALERT"
-          ) {
+          if (doc.status !== 'URGENT' && doc.status !== 'EXPIRED' && doc.status !== 'ALERT') {
             return;
           }
 
           const existing = previousByDocumentId.get(doc.id);
-          let message = "";
+          let message = '';
 
-          if (doc.status === "EXPIRED") {
+          if (doc.status === 'EXPIRED') {
             message = `Document expirat: ${doc.type} pentru remorca ${trailer.registrationNumber}`;
-          } else if (doc.status === "URGENT") {
+          } else if (doc.status === 'URGENT') {
             message = `Urgent! ${doc.type} expiră curând pentru remorca ${trailer.registrationNumber}`;
           } else {
             message = `Atenție! ${doc.type} va expira în curând pentru remorca ${trailer.registrationNumber}`;
@@ -1118,8 +1031,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       nextNotifications.sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
 
       return nextNotifications;
@@ -1129,10 +1041,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const markNotificationAsRead = useCallback((notificationId: string) => {
     setNotifications((prevNotifications) =>
       prevNotifications.map((notification) =>
-        notification.id === notificationId
-          ? { ...notification, read: true }
-          : notification,
-      ),
+        notification.id === notificationId ? { ...notification, read: true } : notification
+      )
     );
   }, []);
 
@@ -1141,15 +1051,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       prevNotifications.map((notification) => ({
         ...notification,
         read: true,
-      })),
+      }))
     );
   }, []);
 
   const deleteNotification = useCallback((notificationId: string) => {
     setNotifications((prevNotifications) =>
-      prevNotifications.filter(
-        (notification) => notification.id !== notificationId,
-      ),
+      prevNotifications.filter((notification) => notification.id !== notificationId)
     );
   }, []);
 
@@ -1158,7 +1066,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const unreadNotificationsCount = notifications.filter(
-    (notification) => !notification.read,
+    (notification) => !notification.read
   ).length;
 
   const addDocument = useCallback((trailerId: string, document: Document) => {
@@ -1171,7 +1079,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return updatedTrailer;
         }
         return trailer;
-      }),
+      })
     );
   }, []);
 
@@ -1180,16 +1088,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let response: Response;
 
       try {
-        response = await authFetch("/api/vehicles", {
-          method: "POST",
+        response = await authFetch('/vehicles', {
+          method: 'POST',
           headers: {
-            "Content-Type": "application/json",
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
         });
       } catch {
         throw new Error(
-          "Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.",
+          'Nu ma pot conecta la serviciul de vehicule. Verifica daca backend-ul este pornit.'
         );
       }
 
@@ -1205,32 +1113,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           throw new Error(
             normalizeErrorMessage(
               responsePayload,
-              "Date invalide. Verifica seria, tipul vehiculului si data de fabricatie in format UTC.",
-            ),
+              'Date invalide. Verifica seria, tipul vehiculului si data de fabricatie in format UTC.'
+            )
           );
         }
 
         if (response.status === 401) {
-          throw new Error(
-            "Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.",
-          );
+          throw new Error('Sesiunea a expirat sau token-ul este invalid. Autentifica-te din nou.');
         }
 
         if (response.status === 409) {
           throw new Error(
             normalizeErrorMessage(
               responsePayload,
-              "Exista deja un vehicul cu aceasta serie in flota selectata.",
-            ),
+              'Exista deja un vehicul cu aceasta serie in flota selectata.'
+            )
           );
         }
 
-        throw new Error(
-          normalizeErrorMessage(
-            responsePayload,
-            "Nu am putut adauga vehiculul.",
-          ),
-        );
+        throw new Error(normalizeErrorMessage(responsePayload, 'Nu am putut adauga vehiculul.'));
       }
 
       const vehicle = isVehicleResponse(responsePayload)
@@ -1243,12 +1144,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             fleetId: payload.fleetId ?? null,
           };
 
-      setTrailers((prevTrailers) => [
-        mapVehicleToTrailer(vehicle),
-        ...prevTrailers,
-      ]);
+      setTrailers((prevTrailers) => [mapVehicleToTrailer(vehicle), ...prevTrailers]);
     },
-    [authFetch],
+    [authFetch]
   );
 
   const updateDocument = useCallback(
@@ -1267,10 +1165,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return updatedTrailer;
           }
           return trailer;
-        }),
+        })
       );
     },
-    [],
+    []
   );
 
   const deleteDocument = useCallback(
@@ -1278,7 +1176,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Keep local behavior for mock documents with non-UUID ids.
       if (!UUID_REGEX.test(documentId)) {
         setTrailers((prevTrailers) =>
-          removeDocumentFromTrailer(prevTrailers, trailerId, documentId),
+          removeDocumentFromTrailer(prevTrailers, trailerId, documentId)
         );
         return;
       }
@@ -1286,12 +1184,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let response: Response;
 
       try {
-        response = await authFetch(`/api/documents/${documentId}`, {
-          method: "DELETE",
+        response = await authFetch(`/documents/${documentId}`, {
+          method: 'DELETE',
         });
       } catch {
         throw new Error(
-          "Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.",
+          'Nu ma pot conecta la serviciul de documente. Verifica daca backend-ul este pornit.'
         );
       }
 
@@ -1305,40 +1203,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         if (response.status === 400) {
           throw new Error(
-            normalizeErrorMessage(
-              responsePayload,
-              "ID-ul documentului este invalid.",
-            ),
+            normalizeErrorMessage(responsePayload, 'ID-ul documentului este invalid.')
           );
         }
 
         if (response.status === 401) {
-          throw new Error("Sesiunea a expirat. Autentifica-te din nou.");
+          throw new Error('Sesiunea a expirat. Autentifica-te din nou.');
         }
 
         if (response.status === 404) {
-          throw new Error("Documentul nu exista sau nu iti apartine.");
+          throw new Error('Documentul nu exista sau nu iti apartine.');
         }
 
-        throw new Error(
-          normalizeErrorMessage(
-            responsePayload,
-            "Nu am putut sterge documentul.",
-          ),
-        );
+        throw new Error(normalizeErrorMessage(responsePayload, 'Nu am putut sterge documentul.'));
       }
 
-      setTrailers((prevTrailers) =>
-        removeDocumentFromTrailer(prevTrailers, trailerId, documentId),
-      );
+      setTrailers((prevTrailers) => removeDocumentFromTrailer(prevTrailers, trailerId, documentId));
     },
-    [authFetch],
+    [authFetch]
   );
 
   const getTrailersSorted = useCallback((): Trailer[] => {
-    const sorted = [...trailers].sort(
-      (a, b) => b.urgencyScore - a.urgencyScore,
-    );
+    const sorted = [...trailers].sort((a, b) => b.urgencyScore - a.urgencyScore);
     return sorted;
   }, [trailers]);
 
@@ -1346,7 +1232,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (id: string): Trailer | undefined => {
       return trailers.find((t) => t.id === id);
     },
-    [trailers],
+    [trailers]
   );
 
   return (
@@ -1389,7 +1275,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 export function useApp() {
   const context = useContext(AppContext);
   if (!context) {
-    throw new Error("useApp must be used within AppProvider");
+    throw new Error('useApp must be used within AppProvider');
   }
   return context;
 }
