@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL='https://fleet-docs.cybermicroservices.com/api'
     ports:
       - '10000:3000'
-    environment:
-      - NEXT_PUBLIC_API_URL='https://fleet-docs.cybermicroservices.com/api'
