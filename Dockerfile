@@ -12,6 +12,10 @@ RUN npm ci
 
 COPY . .
 
+ARG NEXT_PUBLIC_API_URL
+
+ENV NEXT_PUBLIC_API_URL="https://fleet-docs.cybermicroservices.com/api"
+
 RUN npm run build
 
 CMD ["npm", "run", "start"]
