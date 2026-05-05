@@ -454,8 +454,7 @@ function mapApiDocumentToLocal(apiDocument: DocumentUploadResponse, trailerId: s
     expiryDate: apiDocument.expiryDate,
     fileUrl: (() => {
       const raw =
-        apiDocument.filePath ??
-        (apiDocument.fileName ? `/public/uploads/documents/${apiDocument.fileName}` : '');
+        `${BACKEND_BASE_URL}${apiDocument.filePath?.replace('/api/', '/')}`;
       // Normalize misc/uploads → public/uploads so the FE proxy route handles it consistently
       return raw.replace(/^\/misc\/uploads\//, '/public/uploads/');
     })(),
