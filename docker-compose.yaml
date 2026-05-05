@@ -9,4 +9,4 @@ services:
     ports:
       - '10000:3000'
     environment:
-      - AUTH_API_BASE_URL='https://fleet-docs.cybermicroservices.com/api'
+      - NEXT_PUBLIC_API_URL='https://fleet-docs.cybermicroservices.com/api'
